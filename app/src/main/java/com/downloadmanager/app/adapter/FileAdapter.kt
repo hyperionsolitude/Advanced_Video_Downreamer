@@ -18,8 +18,19 @@ class FileAdapter(
     private val selectedFiles = mutableSetOf<String>()
     private val downloadProgress = mutableMapOf<String, Int>() // url -> progress
     private val lastProgressUpdate = mutableMapOf<String, Long>() // url -> timestamp
-    private val PROGRESS_UPDATE_THROTTLE = 500L // Update UI every 500ms max per item
+    private val PROGRESS_UPDATE_THROTTLE = 150L // Update UI every 150ms max per item
     private val progressUpdatePending = mutableSetOf<String>() // Track which items need UI updates
+    private var recyclerView: androidx.recyclerview.widget.RecyclerView? = null
+    
+    // Download status tracking
+    enum class DownloadStatus {
+        PENDING,    // Selected but not started
+        STARTED,    // Download has started
+        DOWNLOADING, // Currently downloading
+        COMPLETE,   // Download completed
+        FAILED      // Download failed
+    }
+    private val downloadStatus = mutableMapOf<String, DownloadStatus>() // url -> status
 
     class FileViewHolder(itemView: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(itemView) {
         val checkBox: CheckBox = itemView.findViewById(R.id.checkBoxFile)
@@ -27,7 +38,8 @@ class FileAdapter(
         val textViewUrl: TextView = itemView.findViewById(R.id.textViewFileUrl)
         val textViewSize: TextView = itemView.findViewById(R.id.textViewFileSize)
         val textViewType: TextView = itemView.findViewById(R.id.textViewFileType)
-        val progressBar: ProgressBar = itemView.findViewById(R.id.progressBarDownload)
+        val textViewStatus: TextView = itemView.findViewById(R.id.textViewDownloadStatus)
+        val progressBar: com.google.android.material.progressindicator.LinearProgressIndicator = itemView.findViewById(R.id.progressBarDownload)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
@@ -69,32 +81,54 @@ class FileAdapter(
         holder.itemView.setOnClickListener {
             holder.checkBox.isChecked = !holder.checkBox.isChecked
         }
-        // Show download progress if available with anti-flashing measures
+        // Show download progress if available with consistent colors
         val progress = downloadProgress[file.url] ?: 0
-        if (progress in 1..99) {
+        if (progress >= 0 && progress <= 100) {
             holder.progressBar.visibility = View.VISIBLE
-            // Only update progress if it's significantly different to prevent flashing
-            val currentProgress = holder.progressBar.progress
-            if (kotlin.math.abs(currentProgress - progress) >= 2) {
-                holder.progressBar.progress = progress
-            }
-            holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
-                itemContext.getColor(com.downloadmanager.app.R.color.progress_fill_downloading)
-            )
-        } else if (progress == 100) {
-            holder.progressBar.visibility = View.VISIBLE
+            // Always update progress for better responsiveness
             holder.progressBar.progress = progress
-            holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
-                itemContext.getColor(com.downloadmanager.app.R.color.progress_fill_complete)
-            )
-        } else if (progress == -1) {
-            holder.progressBar.visibility = View.VISIBLE
-            holder.progressBar.progress = 0
-            holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
-                itemContext.getColor(com.downloadmanager.app.R.color.progress_fill_error)
-            )
+            
+            // Use consistent color to prevent flashing - only change for errors
+            if (progress == -1) {
+                holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+                    itemContext.getColor(com.downloadmanager.app.R.color.progress_fill_error)
+                )
+            } else {
+                // Use consistent green color for all normal progress states
+                holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+                    itemContext.getColor(com.downloadmanager.app.R.color.progress_fill)
+                )
+            }
         } else {
             holder.progressBar.visibility = View.GONE
+        }
+        
+        // Show download status
+        val status = downloadStatus[file.url] ?: DownloadStatus.PENDING
+        when (status) {
+            DownloadStatus.PENDING -> {
+                holder.textViewStatus.visibility = View.GONE
+            }
+            DownloadStatus.STARTED -> {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Starting..."
+                holder.textViewStatus.setTextColor(itemContext.getColor(R.color.status_started))
+            }
+            DownloadStatus.DOWNLOADING -> {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Downloading"
+                holder.textViewStatus.setTextColor(itemContext.getColor(R.color.status_started))
+            }
+            DownloadStatus.COMPLETE -> {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Complete"
+                holder.textViewStatus.setTextColor(itemContext.getColor(R.color.status_complete))
+            }
+            DownloadStatus.FAILED -> {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Failed"
+                holder.textViewStatus.setTextColor(itemContext.getColor(R.color.status_failed))
+            }
         }
     }
 
@@ -121,12 +155,82 @@ class FileAdapter(
         
         downloadProgress[url] = progress
         
-        // Only update UI if enough time has passed to prevent flashing
+        // Update UI more frequently for better responsiveness
         if (currentTime - lastUpdate > PROGRESS_UPDATE_THROTTLE) {
             val index = currentList.indexOfFirst { it.url == url }
             if (index != -1) {
-                notifyItemChanged(index)
+                // Only update the progress bar, not the entire item
+                updateProgressBarOnly(index, progress)
                 lastProgressUpdate[url] = currentTime
+            }
+        }
+    }
+    
+    private fun updateProgressBarOnly(position: Int, progress: Int) {
+        // Find the view holder for this position
+        val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? FileViewHolder
+        viewHolder?.let { holder ->
+            // Only update the progress bar
+            if (progress >= 0 && progress <= 100) {
+                holder.progressBar.visibility = View.VISIBLE
+                holder.progressBar.progress = progress
+                
+                // Use consistent color to prevent flashing - only change for errors
+                if (progress == -1) {
+                    holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+                        holder.itemView.context.getColor(com.downloadmanager.app.R.color.progress_fill_error)
+                    )
+                } else {
+                    // Use consistent green color for all normal progress states
+                    holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+                        holder.itemView.context.getColor(com.downloadmanager.app.R.color.progress_fill)
+                    )
+                }
+            } else {
+                holder.progressBar.visibility = View.GONE
+            }
+        }
+    }
+    
+    fun attachRecyclerView(rv: androidx.recyclerview.widget.RecyclerView) {
+        recyclerView = rv
+    }
+    
+    fun setDownloadStatus(url: String, status: DownloadStatus) {
+        downloadStatus[url] = status
+        val index = currentList.indexOfFirst { it.url == url }
+        if (index != -1) {
+            updateStatusDisplay(index, status)
+        }
+    }
+    
+    private fun updateStatusDisplay(position: Int, status: DownloadStatus) {
+        val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? FileViewHolder
+        viewHolder?.let { holder ->
+            when (status) {
+                DownloadStatus.PENDING -> {
+                    holder.textViewStatus.visibility = View.GONE
+                }
+                DownloadStatus.STARTED -> {
+                    holder.textViewStatus.visibility = View.VISIBLE
+                    holder.textViewStatus.text = "Starting..."
+                    holder.textViewStatus.setTextColor(holder.itemView.context.getColor(R.color.status_started))
+                }
+                DownloadStatus.DOWNLOADING -> {
+                    holder.textViewStatus.visibility = View.VISIBLE
+                    holder.textViewStatus.text = "Downloading"
+                    holder.textViewStatus.setTextColor(holder.itemView.context.getColor(R.color.status_started))
+                }
+                DownloadStatus.COMPLETE -> {
+                    holder.textViewStatus.visibility = View.VISIBLE
+                    holder.textViewStatus.text = "Complete"
+                    holder.textViewStatus.setTextColor(holder.itemView.context.getColor(R.color.status_complete))
+                }
+                DownloadStatus.FAILED -> {
+                    holder.textViewStatus.visibility = View.VISIBLE
+                    holder.textViewStatus.text = "Failed"
+                    holder.textViewStatus.setTextColor(holder.itemView.context.getColor(R.color.status_failed))
+                }
             }
         }
     }

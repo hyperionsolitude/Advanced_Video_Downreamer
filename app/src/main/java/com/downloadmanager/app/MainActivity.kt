@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private var lastProgressUpdate = 0L
-    private val PROGRESS_UPDATE_INTERVAL = 500L // Increased to 500ms to reduce flashing
+    private val PROGRESS_UPDATE_INTERVAL = 200L // Reduced back to 200ms for better responsiveness
     private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -199,9 +199,11 @@ class MainActivity : AppCompatActivity() {
         
         // Setup RecyclerView
         recyclerViewFiles.layoutManager = LinearLayoutManager(this)
-        recyclerViewFiles.adapter = FileAdapter { file, isSelected ->
+        val adapter = FileAdapter { file, isSelected ->
             handleFileSelection(file, isSelected)
         }
+        recyclerViewFiles.adapter = adapter
+        adapter.attachRecyclerView(recyclerViewFiles)
         
         // Setup SwipeRefreshLayout
         swipeRefresh.setOnRefreshListener {
@@ -562,12 +564,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
         for (file in filesToDownload) {
+            // Mark download as started
+            val adapter = recyclerViewFiles.adapter as? FileAdapter
+            adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
+            
             // Start each download in parallel
             lifecycleScope.launch {
                 try {
                     downloadFile(file)
                 } catch (e: Exception) {
-                    val adapter = recyclerViewFiles.adapter as? FileAdapter
+                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
                     adapter?.updateProgressOnly(file.url, -1)
                     adapter?.flushProgressUpdates()
                     showSnackbar("Error downloading ${file.name}: ${e.message}")
@@ -602,6 +608,13 @@ class MainActivity : AppCompatActivity() {
             return@withContext
         }
         try {
+            // Initialize progress bar immediately when download starts
+            runOnUiThread {
+                val adapter = recyclerViewFiles.adapter as? FileAdapter
+                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.DOWNLOADING)
+                adapter?.updateDownloadProgress(file.url, 0)
+            }
+            
             val connection = URL(file.url).openConnection()
             connection.connectTimeout = 30000
             connection.readTimeout = 30000
@@ -616,23 +629,20 @@ class MainActivity : AppCompatActivity() {
                 totalBytesRead += bytesRead
                 if (contentLength > 0) {
                     val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                    // Only update progress in 5% increments to reduce flashing
-                    val roundedProgress = (progress / 5) * 5
-                    progressUpdateQueue[file.url] = roundedProgress
+                    // Update progress in 2% increments for smoother display
+                    val roundedProgress = (progress / 2) * 2
                     
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
-                        // Batch update all queued progress updates
+                        // Update progress immediately for better responsiveness
                         runOnUiThread {
                             val adapter = recyclerViewFiles.adapter as? FileAdapter
-                            progressUpdateQueue.forEach { (url, progressValue) ->
-                                adapter?.updateProgressOnly(url, progressValue)
-                            }
-                            // Single UI refresh for all updates
-                            adapter?.flushProgressUpdates()
-                            progressUpdateQueue.clear()
+                            adapter?.updateDownloadProgress(file.url, roundedProgress)
                         }
                         lastProgressUpdate = currentTime
+                    } else {
+                        // Queue for batch update
+                        progressUpdateQueue[file.url] = roundedProgress
                     }
                 }
             }
@@ -642,6 +652,7 @@ class MainActivity : AppCompatActivity() {
             outputFile.setReadable(true, false)
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
+                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.COMPLETE)
                 adapter?.updateProgressOnly(file.url, 100)
                 adapter?.flushProgressUpdates()
                 showSnackbar("Downloaded: ${file.name}")
@@ -649,6 +660,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
+                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
                 adapter?.updateProgressOnly(file.url, -1)
                 adapter?.flushProgressUpdates()
                 showSnackbar("Error downloading ${file.name}: ${e.message}")
