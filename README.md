@@ -1,11 +1,12 @@
 # 📥 Advanced Video Downreamer
 
-A powerful Android download manager designed for downloading video files, audio files, and other media content from web directories and direct URLs.
+A powerful Android download manager primarily designed for downloading video files, with additional support for audio files and other media content from web directories and direct URLs.
 
 ## ✨ Features
 
 ### 🎯 Core Functionality
-- **Multi-format Support**: Download videos, audio files, documents, and more
+- **Video-Focused**: Primarily designed for video file downloads
+- **Multi-format Support**: Also supports audio files, documents, and archives
 - **Batch Downloads**: Select and download multiple files simultaneously
 - **Progress Tracking**: Real-time download progress with visual indicators
 - **Status Monitoring**: Clear status indicators (Starting, Downloading, Complete, Failed)
@@ -113,17 +114,17 @@ Download the latest APK from the [Releases](https://github.com/hyperionsolitude/
 
 ## 📋 Supported File Types
 
-### Video Formats
-- MP4, AVI, MKV, MOV, WMV, FLV, WebM, 3GP
+### Primary Focus - Video Formats
+- **MP4, MKV, AVI, MOV, WMV, FLV, WebM** - Main video formats
 
-### Audio Formats
-- MP3, WAV, FLAC, AAC, OGG, M4A
+### Secondary Support - Audio Formats
+- **MP3, WAV, FLAC, AAC, OGG, M4A** - Audio files for playlists
 
-### Document Formats
-- PDF, DOC, DOCX, TXT, RTF
+### Additional Support
+- **PDF** - Document files
+- **ZIP, RAR, 7Z** - Archive files
 
-### Archive Formats
-- ZIP, RAR, 7Z, TAR, GZ
+*Note: While the app supports multiple file types, it's primarily optimized for video file downloads and streaming.*
 
 ## 🔧 Configuration
 
