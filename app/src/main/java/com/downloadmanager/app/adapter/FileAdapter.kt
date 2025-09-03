@@ -17,6 +17,9 @@ class FileAdapter(
 
     private val selectedFiles = mutableSetOf<String>()
     private val downloadProgress = mutableMapOf<String, Int>() // url -> progress
+    private val lastProgressUpdate = mutableMapOf<String, Long>() // url -> timestamp
+    private val PROGRESS_UPDATE_THROTTLE = 500L // Update UI every 500ms max per item
+    private val progressUpdatePending = mutableSetOf<String>() // Track which items need UI updates
 
     class FileViewHolder(itemView: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(itemView) {
         val checkBox: CheckBox = itemView.findViewById(R.id.checkBoxFile)
@@ -66,11 +69,15 @@ class FileAdapter(
         holder.itemView.setOnClickListener {
             holder.checkBox.isChecked = !holder.checkBox.isChecked
         }
-        // Show download progress if available
+        // Show download progress if available with anti-flashing measures
         val progress = downloadProgress[file.url] ?: 0
         if (progress in 1..99) {
             holder.progressBar.visibility = View.VISIBLE
-            holder.progressBar.progress = progress
+            // Only update progress if it's significantly different to prevent flashing
+            val currentProgress = holder.progressBar.progress
+            if (kotlin.math.abs(currentProgress - progress) >= 2) {
+                holder.progressBar.progress = progress
+            }
             holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
                 itemContext.getColor(com.downloadmanager.app.R.color.progress_fill_downloading)
             )
@@ -109,9 +116,36 @@ class FileAdapter(
     fun getSelectedFiles(): Set<String> = selectedFiles.toSet()
 
     fun updateDownloadProgress(url: String, progress: Int) {
+        val currentTime = System.currentTimeMillis()
+        val lastUpdate = lastProgressUpdate[url] ?: 0L
+        
         downloadProgress[url] = progress
-        val index = currentList.indexOfFirst { it.url == url }
-        if (index != -1) notifyItemChanged(index)
+        
+        // Only update UI if enough time has passed to prevent flashing
+        if (currentTime - lastUpdate > PROGRESS_UPDATE_THROTTLE) {
+            val index = currentList.indexOfFirst { it.url == url }
+            if (index != -1) {
+                notifyItemChanged(index)
+                lastProgressUpdate[url] = currentTime
+            }
+        }
+    }
+    
+    fun updateProgressOnly(url: String, progress: Int) {
+        // Update progress without triggering UI refresh
+        downloadProgress[url] = progress
+        progressUpdatePending.add(url)
+    }
+    
+    fun flushProgressUpdates() {
+        // Update all pending progress items at once
+        progressUpdatePending.forEach { url ->
+            val index = currentList.indexOfFirst { it.url == url }
+            if (index != -1) {
+                notifyItemChanged(index)
+            }
+        }
+        progressUpdatePending.clear()
     }
 
     companion object DiffCallback : DiffUtil.ItemCallback<DownloadFile>() {

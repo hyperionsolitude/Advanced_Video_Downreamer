@@ -79,11 +79,14 @@
         <com.google.android.material.progressindicator.LinearProgressIndicator
             android:id="@+id/progressBarDownload"
             android:layout_width="match_parent"
-            android:layout_height="12dp"
+            android:layout_height="8dp"
             android:layout_marginTop="8dp"
             android:progress="0"
             android:max="100"
             android:visibility="gone"
+            android:indeterminate="false"
+            android:progressTint="@color/progress_fill_downloading"
+            android:trackTint="@color/progress_background"
             style="@style/Widget.MaterialComponents.LinearProgressIndicator" />
 
     </LinearLayout>

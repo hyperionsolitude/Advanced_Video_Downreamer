@@ -89,6 +89,19 @@ class MainActivity : AppCompatActivity() {
     private val KEY_SD_URI = "sd_card_uri"
     private lateinit var prefs: SharedPreferences
     private var sdCardUri: Uri? = null
+    
+    // Performance optimization: Throttle UI updates
+    private val progressUpdateHandler = Handler(Looper.getMainLooper())
+    private val progressUpdateRunnable = object : Runnable {
+        override fun run() {
+            // Batch update all progress bars
+            val adapter = recyclerViewFiles.adapter as? FileAdapter
+            adapter?.notifyDataSetChanged()
+        }
+    }
+    private var lastProgressUpdate = 0L
+    private val PROGRESS_UPDATE_INTERVAL = 500L // Increased to 500ms to reduce flashing
+    private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
@@ -541,7 +554,8 @@ class MainActivity : AppCompatActivity() {
                     downloadFile(file)
                 } catch (e: Exception) {
                     val adapter = recyclerViewFiles.adapter as? FileAdapter
-                    adapter?.updateDownloadProgress(file.url, -1)
+                    adapter?.updateProgressOnly(file.url, -1)
+                    adapter?.flushProgressUpdates()
                     showSnackbar("Error downloading ${file.name}: ${e.message}")
                 }
             }
@@ -579,7 +593,7 @@ class MainActivity : AppCompatActivity() {
             connection.readTimeout = 30000
             val inputStream = connection.getInputStream()
             val outputStream = FileOutputStream(outputFile, false)
-            val buffer = ByteArray(8192)
+            val buffer = ByteArray(16384) // Increased buffer size for better performance
             var bytesRead: Int
             var totalBytesRead = 0L
             val contentLength = connection.contentLength
@@ -588,9 +602,23 @@ class MainActivity : AppCompatActivity() {
                 totalBytesRead += bytesRead
                 if (contentLength > 0) {
                     val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                    runOnUiThread {
-                        val adapter = recyclerViewFiles.adapter as? FileAdapter
-                        adapter?.updateDownloadProgress(file.url, progress)
+                    // Only update progress in 5% increments to reduce flashing
+                    val roundedProgress = (progress / 5) * 5
+                    progressUpdateQueue[file.url] = roundedProgress
+                    
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
+                        // Batch update all queued progress updates
+                        runOnUiThread {
+                            val adapter = recyclerViewFiles.adapter as? FileAdapter
+                            progressUpdateQueue.forEach { (url, progressValue) ->
+                                adapter?.updateProgressOnly(url, progressValue)
+                            }
+                            // Single UI refresh for all updates
+                            adapter?.flushProgressUpdates()
+                            progressUpdateQueue.clear()
+                        }
+                        lastProgressUpdate = currentTime
                     }
                 }
             }
@@ -600,13 +628,15 @@ class MainActivity : AppCompatActivity() {
             outputFile.setReadable(true, false)
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.updateDownloadProgress(file.url, 100)
+                adapter?.updateProgressOnly(file.url, 100)
+                adapter?.flushProgressUpdates()
                 showSnackbar("Downloaded: ${file.name}")
             }
         } catch (e: Exception) {
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.updateDownloadProgress(file.url, -1)
+                adapter?.updateProgressOnly(file.url, -1)
+                adapter?.flushProgressUpdates()
                 showSnackbar("Error downloading ${file.name}: ${e.message}")
             }
             Log.e("DownloadDebug", "Error downloading file: ${e.message}", e)
@@ -999,7 +1029,9 @@ class MainActivity : AppCompatActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
-        // downloadExecutor.shutdown() // This line is removed as per the new_code, as the ViewModel handles coroutines.
+        // Clean up handlers to prevent memory leaks
+        progressUpdateHandler.removeCallbacks(progressUpdateRunnable)
+        mainHandler.removeCallbacksAndMessages(null)
     }
 
     private fun showSnackbar(message: String, long: Boolean = false) {
