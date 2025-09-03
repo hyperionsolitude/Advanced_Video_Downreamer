@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private var lastProgressUpdate = 0L
-    private val PROGRESS_UPDATE_INTERVAL = 200L // Reduced back to 200ms for better responsiveness
+    private val PROGRESS_UPDATE_INTERVAL = 500L // Optimized to 500ms for better performance
     private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -343,8 +343,9 @@ class MainActivity : AppCompatActivity() {
         val subfolder = getSubfolderNameFromUrl()
         try {
             val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .timeout(10000)
+                .userAgent("Mozilla/5.0 (Android) Advanced Video Downreamer")
+                .timeout(8000) // Reduced timeout for faster response
+                .maxBodySize(0) // No body size limit
                 .get()
             val links = doc.select("a[href]")
             for (link in links) {
@@ -368,8 +369,9 @@ class MainActivity : AppCompatActivity() {
         val subfolder = getSubfolderNameFromUrl()
         try {
             val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .timeout(10000)
+                .userAgent("Mozilla/5.0 (Android) Advanced Video Downreamer")
+                .timeout(8000) // Reduced timeout for faster response
+                .maxBodySize(0) // No body size limit
                 .get()
             val fileSelectors = listOf(
                 "a[href*='.mp4']", "a[href*='.mkv']", "a[href*='.avi']", "a[href*='.mov']",
@@ -611,11 +613,12 @@ class MainActivity : AppCompatActivity() {
             }
             
             val connection = URL(file.url).openConnection()
-            connection.connectTimeout = 30000
+            connection.connectTimeout = 15000 // Reduced timeout for faster failure detection
             connection.readTimeout = 30000
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) Advanced Video Downreamer")
             val inputStream = connection.getInputStream()
             val outputStream = FileOutputStream(outputFile, false)
-            val buffer = ByteArray(16384) // Increased buffer size for better performance
+            val buffer = ByteArray(32768) // Doubled buffer size for better performance
             var bytesRead: Int
             var totalBytesRead = 0L
             val contentLength = connection.contentLength
@@ -624,8 +627,8 @@ class MainActivity : AppCompatActivity() {
                 totalBytesRead += bytesRead
                 if (contentLength > 0) {
                     val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                    // Update progress in 2% increments for smoother display
-                    val roundedProgress = (progress / 2) * 2
+                    // Update progress in 5% increments for better performance
+                    val roundedProgress = (progress / 5) * 5
                     
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
@@ -641,8 +644,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            inputStream.close()
-            outputStream.close()
+            // Ensure proper resource cleanup
+            inputStream.use { it.close() }
+            outputStream.use { it.close() }
             // Make the file world-readable for other apps (e.g., VLC)
             outputFile.setReadable(true, false)
             runOnUiThread {

@@ -20,9 +20,28 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# Keep NewPipeExtractor classes
--keep class org.schabi.newpipe.extractor.** { *; }
--keep class com.github.yausername.youtubedl_android.** { *; }
+# Keep JSoup classes (required for HTML parsing)
+-keep class org.jsoup.** { *; }
 
-# Keep JSoup classes
--keep class org.jsoup.** { *; } 
+# Keep Android components
+-keep class androidx.** { *; }
+-keep class com.google.android.material.** { *; }
+
+# Keep app classes
+-keep class com.downloadmanager.app.** { *; }
+
+# Optimize for size
+-optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
+-optimizationpasses 5
+-allowaccessmodification
+-dontpreverify
+
+# Remove logging in release builds
+-assumenosideeffects class android.util.Log {
+    public static boolean isLoggable(java.lang.String, int);
+    public static int v(...);
+    public static int i(...);
+    public static int w(...);
+    public static int d(...);
+    public static int e(...);
+} 

@@ -18,7 +18,7 @@ class FileAdapter(
     private val selectedFiles = mutableSetOf<String>()
     private val downloadProgress = mutableMapOf<String, Int>() // url -> progress
     private val lastProgressUpdate = mutableMapOf<String, Long>() // url -> timestamp
-    private val PROGRESS_UPDATE_THROTTLE = 150L // Update UI every 150ms max per item
+    private val PROGRESS_UPDATE_THROTTLE = 300L // Update UI every 300ms max per item for better performance
     private val progressUpdatePending = mutableSetOf<String>() // Track which items need UI updates
     private var recyclerView: androidx.recyclerview.widget.RecyclerView? = null
     
@@ -144,6 +144,10 @@ class FileAdapter(
 
     fun clearSelection() {
         selectedFiles.clear()
+        downloadProgress.clear()
+        downloadStatus.clear()
+        lastProgressUpdate.clear()
+        progressUpdatePending.clear()
         notifyDataSetChanged()
     }
 
