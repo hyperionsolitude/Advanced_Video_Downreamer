@@ -41,11 +41,11 @@ class FileAdapter(
         // Highlight selected item
         holder.itemView.isSelected = selectedFiles.contains(file.url)
         // Show download status in the name with proper colors
-        val statusText = if (file.isDownloaded()) "\uD83D\uDCC1 LOCAL" else "\uD83C\uDF10 NETWORK"
+        val statusText = if (file.isCompletelyDownloaded()) "\uD83D\uDCC1 LOCAL" else "\uD83C\uDF10 NETWORK"
         holder.textViewName.text = "$statusText - ${file.name}"
         // Set text color based on download status
         val itemContext = holder.itemView.context
-        if (file.isDownloaded()) {
+        if (file.isCompletelyDownloaded()) {
             holder.textViewName.setTextColor(itemContext.getColor(com.downloadmanager.app.R.color.status_local))
         } else {
             holder.textViewName.setTextColor(itemContext.getColor(com.downloadmanager.app.R.color.status_network))

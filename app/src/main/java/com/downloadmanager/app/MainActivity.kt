@@ -138,10 +138,17 @@ class MainActivity : AppCompatActivity() {
     
     override fun onResume() {
         super.onResume()
-        // Delete any zero-length files for all current files
+        // Delete any zero-length files and partial downloads for all current files
         for (file in viewModel.currentFiles.value ?: emptyList()) {
             val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
             FileUtils.deleteFileIfZeroLength(viewModel.currentStorageDir.value, fileName, file.subfolder)
+            // Also clean up partial downloads (files that exist but are not complete)
+            if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
+                val localFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                if (localFile.exists()) {
+                    FileUtils.safeDelete(localFile)
+                }
+            }
         }
         // Clean up last playlist file if it exists
         cleanupLastPlaylist()
@@ -296,10 +303,17 @@ class MainActivity : AppCompatActivity() {
                     files
                 }
                 
-                // Delete any zero-length files for all fetched files
+                // Delete any zero-length files and partial downloads for all fetched files
                 for (file in filteredFiles) {
                     val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
                     FileUtils.deleteFileIfZeroLength(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                    // Also clean up partial downloads (files that exist but are not complete)
+                    if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
+                        val localFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                        if (localFile.exists()) {
+                            FileUtils.safeDelete(localFile)
+                        }
+                    }
                 }
                 
                 withContext(Dispatchers.Main) {
@@ -542,7 +556,7 @@ class MainActivity : AppCompatActivity() {
             showSnackbar("No network connection. Please check your internet.")
             return
         }
-        val filesToDownload = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true && !it.isDownloaded() } ?: emptyList()
+        val filesToDownload = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded() } ?: emptyList()
         if (filesToDownload.isEmpty()) {
             showSnackbar("All selected files are already downloaded.")
             return
@@ -672,7 +686,7 @@ class MainActivity : AppCompatActivity() {
         }
         val intent = Intent(Intent.ACTION_VIEW)
         val mimeType = getMimeType(file.url)
-        if (file.isDownloaded()) {
+        if (file.isCompletelyDownloaded()) {
             val localPath = file.getLocalPath()
             val localFile = if (localPath != null) File(localPath) else null
             if (localFile == null || !localFile.exists() || localFile.length() == 0L) {
@@ -854,7 +868,7 @@ class MainActivity : AppCompatActivity() {
                 intent.setPackage(null)
                 try {
                     startActivity(Intent.createChooser(intent, "Open playlist with"))
-                    val localFiles = files.count { it.isDownloaded() }
+                    val localFiles = files.count { it.isCompletelyDownloaded() }
                     val networkFiles = files.size - localFiles
                     val message = "Opening playlist with ${files.size} files\n" +
                         "\uD83D\uDCC1 Local: $localFiles | \uD83C\uDF10 Network: $networkFiles"
@@ -879,9 +893,9 @@ class MainActivity : AppCompatActivity() {
         playlistContent.append("#EXTM3U\n")
         playlistContent.append("# Playlist created by Download Manager\n")
         playlistContent.append("# Priority: Local files first, then network files\n\n")
-        val sortedFiles = files.sortedWith(compareBy({ !it.isDownloaded() }, { it.name }))
+        val sortedFiles = files.sortedWith(compareBy({ !it.isCompletelyDownloaded() }, { it.name }))
         sortedFiles.forEach { file ->
-            if (file.isDownloaded()) {
+            if (file.isCompletelyDownloaded()) {
                 val localPath = file.getLocalPath()
                 playlistContent.append("#EXTINF:-1,${file.name} (LOCAL)\n")
                 playlistContent.append("file://$localPath\n\n")
@@ -899,9 +913,9 @@ class MainActivity : AppCompatActivity() {
         playlistContent.append("#EXTM3U\n")
         playlistContent.append("# Playlist created by Download Manager\n")
         playlistContent.append("# Priority: Local files first, then network files\n\n")
-        val sortedFiles = files.sortedWith(compareBy({ !it.isDownloaded() }, { it.name }))
+        val sortedFiles = files.sortedWith(compareBy({ !it.isCompletelyDownloaded() }, { it.name }))
         sortedFiles.forEach { file ->
-            if (file.isDownloaded()) {
+            if (file.isCompletelyDownloaded()) {
                 val localPath = file.getLocalPath()
                 playlistContent.append("#EXTINF:-1,${file.name} (LOCAL)\n")
                 playlistContent.append("file://$localPath\n\n")

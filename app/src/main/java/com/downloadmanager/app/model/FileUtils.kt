@@ -19,6 +19,19 @@ object FileUtils {
         val file = getLocalFile(baseDir, fileName, subfolder)
         return file.exists() && file.length() > 0
     }
+    
+    fun isFileComplete(baseDir: File?, fileName: String, subfolder: String?, expectedSize: Long? = null): Boolean {
+        val file = getLocalFile(baseDir, fileName, subfolder)
+        if (!file.exists() || file.length() == 0L) return false
+        
+        // If we have expected size, check if file is complete
+        if (expectedSize != null && expectedSize > 0) {
+            return file.length() >= expectedSize
+        }
+        
+        // For files without expected size, consider them complete if they exist and have content
+        return file.length() > 0
+    }
 
     fun deleteFileIfZeroLength(baseDir: File?, fileName: String, subfolder: String?): Boolean {
         val file = getLocalFile(baseDir, fileName, subfolder)

@@ -40,6 +40,30 @@ data class DownloadFile(
         val fileName = name.ifEmpty { url.substringAfterLast("/") }
         return FileUtils.fileExists(downloadDir, fileName, subfolder)
     }
+    
+    /**
+     * Check if this file is completely downloaded (not partial)
+     */
+    fun isCompletelyDownloaded(): Boolean {
+        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val expectedSize = parseFileSizeToBytes()
+        return FileUtils.isFileComplete(downloadDir, fileName, subfolder, expectedSize)
+    }
+    
+    /**
+     * Parse the file size string to bytes
+     */
+    private fun parseFileSizeToBytes(): Long? {
+        val s = size.trim().lowercase()
+        return when {
+            s.endsWith("gb") -> ((s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024 * 1024).toLong()
+            s.endsWith("mb") -> ((s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024).toLong()
+            s.endsWith("kb") -> ((s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) * 1024).toLong()
+            s.endsWith("b") -> (s.removeSuffix("b").trim().toDoubleOrNull() ?: 0.0).toLong()
+            s == "unknown size" -> null
+            else -> null
+        }
+    }
 
     /**
      * Get the local file path if downloaded, null otherwise
