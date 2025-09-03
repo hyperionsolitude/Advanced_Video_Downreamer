@@ -46,7 +46,7 @@ import android.content.SharedPreferences
 class MainActivity : AppCompatActivity() {
     
     private lateinit var editTextUrl: EditText
-    private lateinit var checkboxAudioOnly: CheckBox
+
     private lateinit var buttonFetch: Button
     private lateinit var textViewStorageInfo: TextView
     private lateinit var buttonChangeStorage: Button
@@ -179,7 +179,7 @@ class MainActivity : AppCompatActivity() {
         // Replace all findViewById with binding references
         // Example: editTextUrl = binding.editTextUrl
         editTextUrl = binding.editTextUrl
-        checkboxAudioOnly = binding.checkboxAudioOnly
+
         buttonFetch = binding.buttonFetch
         textViewStorageInfo = binding.textViewStorageInfo
         buttonChangeStorage = binding.buttonChangeStorage
@@ -298,12 +298,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 
-                val audioOnly = checkboxAudioOnly.isChecked
-                val filteredFiles = if (audioOnly) {
-                    files.filter { it.type == "audio" }
-            } else {
-                    files
-                }
+                val filteredFiles = files
                 
                 // Delete any zero-length files and partial downloads for all fetched files
                 for (file in filteredFiles) {

@@ -44,16 +44,6 @@
                         android:inputType="textUri" />
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <!-- Audio Only Checkbox -->
-                <com.google.android.material.checkbox.MaterialCheckBox
-                    android:id="@+id/checkboxAudioOnly"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/checkbox_audio_only"
-                    android:checked="false"
-                    android:paddingEnd="8dp"
-                    android:contentDescription="@string/checkbox_audio_only_description" />
-
                 <!-- Fetch Files Button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/buttonFetch"

@@ -27,8 +27,7 @@
     <string name="icon_stop">⏹️</string>
     <string name="icon_storage">💾</string>
     <string name="hint_url">Enter direct file URL or directory</string>
-    <string name="checkbox_audio_only">Audio files only</string>
-    <string name="checkbox_audio_only_description">Audio files only checkbox</string>
+
     <string name="button_fetch_files">🔍 Fetch Files</string>
     <string name="button_fetch_files_description">Fetch files button</string>
     <string name="storage_info_title">💾 Storage Information</string>
