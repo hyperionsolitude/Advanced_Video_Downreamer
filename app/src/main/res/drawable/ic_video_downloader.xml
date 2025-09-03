@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background with gradient effect -->
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M54,54m-50,0a50,50 0,1 1,100 0a50,50 0,1 1,-100 0" />
+    
+    <!-- Video camera icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,35h30c3,0 5,2 5,5v20c0,3 -2,5 -5,5H30c-3,0 -5,-2 -5,-5V40C25,37 27,35 30,35z" />
+    
+    <!-- Video lens -->
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M45,45m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+    
+    <!-- Play button inside lens -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,42L42,48L48,45Z" />
+    
+    <!-- Download arrow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,65L54,80M47,73L54,80L61,73" 
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    
+    <!-- Signal waves for streaming -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#B3FFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M20,20c5,0 5,5 10,5s5,-5 10,-5s5,5 10,5" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#80FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M15,15c8,0 8,8 16,8s8,-8 16,-8s8,8 16,8" />
+</vector>

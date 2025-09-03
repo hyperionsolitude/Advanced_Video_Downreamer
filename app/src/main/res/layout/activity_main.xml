@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <data>
+        <!-- Variables for data binding can be added here if needed -->
+    </data>
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fillViewport="true">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Title -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/app_name"
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp"
+                    android:textColor="#FFFFFF" />
+
+                <!-- URL Input -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/editTextUrl"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="@string/hint_url"
+                        android:inputType="textUri" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- Audio Only Checkbox -->
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkboxAudioOnly"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/checkbox_audio_only"
+                    android:checked="false"
+                    android:paddingEnd="8dp"
+                    android:contentDescription="@string/checkbox_audio_only_description" />
+
+                <!-- Fetch Files Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/buttonFetch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/button_fetch_files"
+                    android:layout_marginBottom="8dp"
+                    style="@style/Widget.MaterialComponents.Button"
+                    android:backgroundTint="?attr/colorPrimary"
+                    android:textColor="?android:attr/textColorPrimaryInverse"
+                    android:contentDescription="@string/button_fetch_files_description" />
+
+                <!-- Storage Info Card -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    app:cardElevation="4dp"
+                    app:cardCornerRadius="8dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="12dp">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/storage_info_title"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:layout_marginBottom="4dp" />
+                        <TextView
+                            android:id="@+id/textViewStorageInfo"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/loading_storage_info"
+                            android:textSize="14sp"
+                            android:textColor="#FFFFFF"
+                            android:layout_marginBottom="4dp" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/buttonChangeStorage"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/button_change_storage"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_marginEnd="8dp"
+                            android:contentDescription="@string/button_change_storage_description" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Filter Input -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/editTextFilter"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="@string/hint_filter"
+                        android:inputType="text" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- File/Selection Info -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="4dp">
+                    <TextView
+                        android:id="@+id/textViewFileCount"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/files_count"
+                        android:textSize="13sp" />
+                    <TextView
+                        android:id="@+id/textViewSelectedCount"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/selected_count"
+                        android:textSize="13sp"
+                        android:gravity="end" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/textViewSelectedSize"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/total_size"
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Selection Buttons -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="4dp">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonSelectAll"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/select_all"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_marginEnd="4dp"
+                        android:contentDescription="@string/select_all_description" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonDeselectAll"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/deselect_all"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_marginStart="4dp"
+                        android:contentDescription="@string/deselect_all_description" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonInvertSelection"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/invert_selection"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_marginStart="4dp"
+                        android:contentDescription="@string/invert_selection_description" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonSelectNone"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/select_none"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_marginStart="4dp"
+                        android:contentDescription="@string/select_none_description" />
+                </LinearLayout>
+
+                <!-- Download/Stream Buttons -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="4dp">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonDownload"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/button_download"
+                        android:layout_marginEnd="4dp"
+                        android:contentDescription="@string/button_download_description" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonStream"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/button_stream"
+                        android:layout_marginStart="4dp"
+                        android:contentDescription="@string/button_stream_description" />
+                </LinearLayout>
+
+                <!-- Download Controls (hidden by default) -->
+                <LinearLayout
+                    android:id="@+id/layoutDownloadControls"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:layout_marginBottom="4dp">
+                    <TextView
+                        android:id="@+id/textViewDownloadProgress"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/download_progress"
+                        android:textSize="14sp"
+                        android:gravity="center" />
+                    <com.google.android.material.progressindicator.LinearProgressIndicator
+                        android:id="@+id/progressBarDownload"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
+                        style="@style/Widget.MaterialComponents.LinearProgressIndicator" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/buttonPause"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/button_pause"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_marginEnd="4dp"
+                            android:contentDescription="@string/button_pause_description" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/buttonResume"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/button_resume"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_marginStart="4dp"
+                            android:visibility="gone"
+                            android:contentDescription="@string/button_resume_description" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/buttonStop"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/button_stop"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_marginStart="4dp"
+                            android:contentDescription="@string/button_stop_description" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Progress Bar (hidden by default) -->
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/progressBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    android:layout_marginBottom="4dp"
+                    style="@style/Widget.MaterialComponents.LinearProgressIndicator" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- File List -->
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/recyclerViewFiles"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="vertical" />
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    </LinearLayout>
+</layout> 
