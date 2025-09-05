@@ -42,6 +42,10 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.content.SharedPreferences
+import com.downloadmanager.app.utils.Logger
+import com.downloadmanager.app.utils.ErrorHandler
+import com.downloadmanager.app.utils.MemoryManager
+import java.net.ConnectException
 
 class MainActivity : AppCompatActivity() {
     
@@ -96,12 +100,22 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             // Batch update all progress bars
             val adapter = recyclerViewFiles.adapter as? FileAdapter
-            adapter?.notifyDataSetChanged()
+            adapter?.flushProgressUpdates()
         }
     }
     private var lastProgressUpdate = 0L
-    private val PROGRESS_UPDATE_INTERVAL = 500L // Optimized to 500ms for better performance
+    private val PROGRESS_UPDATE_INTERVAL = 200L // Optimized to 200ms for better responsiveness
     private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
+    
+    // Performance optimization: Coroutine scope for downloads
+    private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
+    // Performance optimization: Memory-aware caches
+    private val fileTypeCache = MemoryManager.MemoryAwareCache<String, String>()
+    private val fileSizeCache = MemoryManager.MemoryAwareCache<String, String>()
+    
+    // Memory management
+    private val memoryManager = MemoryManager
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
@@ -123,10 +137,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Logger.d("MainActivity", "onCreate started")
+        
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         sdCardUri = prefs.getString(KEY_SD_URI, null)?.let { Uri.parse(it) }
+        
+        Logger.d("MainActivity", "Memory usage: ${memoryManager.getMemoryUsagePercentage(this)}%")
+        Logger.d("MainActivity", "Available memory: ${memoryManager.getAvailableMemory(this) / 1024 / 1024}MB")
         
         initializeViews()
         setupClickListeners()
@@ -134,10 +153,21 @@ class MainActivity : AppCompatActivity() {
         requestPermissionsIfNeeded()
         loadStorageDir()
         updateStorageInfo()
+        
+        Logger.d("MainActivity", "onCreate completed")
     }
     
     override fun onResume() {
         super.onResume()
+        
+        // Memory management: Clear caches if low memory
+        if (memoryManager.shouldClearCache(this)) {
+            fileTypeCache.clear()
+            fileSizeCache.clear()
+            memoryManager.forceGarbageCollection()
+            Logger.d("MemoryManager", "Cleared caches due to low memory")
+        }
+        
         // Delete any zero-length files and partial downloads for all current files
         for (file in viewModel.currentFiles.value ?: emptyList()) {
             val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
@@ -272,11 +302,19 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun fetchFiles(url: String) {
-        if (!isNetworkAvailable()) {
-            showSnackbar("No network connection. Please check your internet.")
+        Logger.d("MainActivity", "fetchFiles started for URL: $url")
+        
+        if (!ErrorHandler.isNetworkAvailable(this)) {
+            val errorMessage = ErrorHandler.getUserFriendlyMessage(
+                ConnectException("No network connection"), this
+            )
+            Logger.w("MainActivity", "No network connection available")
+            showSnackbar(errorMessage)
             swipeRefresh.isRefreshing = false
             return
         }
+        
+        Logger.d("MainActivity", "Network available, starting file fetch")
         progressBar.visibility = View.VISIBLE
         buttonFetch.isEnabled = false
         swipeRefresh.isRefreshing = true
@@ -314,6 +352,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 withContext(Dispatchers.Main) {
+                    Logger.d("MainActivity", "Successfully fetched ${filteredFiles.size} files")
                     viewModel.setFiles(filteredFiles)
                     
                     textViewFileCount.text = "Files: ${viewModel.currentFiles.value?.size ?: 0}"
@@ -327,12 +366,14 @@ class MainActivity : AppCompatActivity() {
                 }
                 
             } catch (e: Exception) {
-                Log.e("MainActivity", "Error fetching files: ${e.message}", e)
+                Logger.e("MainActivity", "Error fetching files: ${e.message}", e)
+                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+                val suggestion = ErrorHandler.getSuggestedAction(e, this@MainActivity)
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     buttonFetch.isEnabled = true
                     swipeRefresh.isRefreshing = false
-                    showSnackbar("Error fetching files: ${e.message}")
+                    showSnackbar("$errorMessage\n$suggestion", true)
                 }
             }
         }
@@ -359,7 +400,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error parsing directory: ${e.message}", e)
+            Logger.e("MainActivity", "Error parsing directory: ${e.message}", e)
         }
         return files
     }
@@ -392,7 +433,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error parsing HTML page: ${e.message}", e)
+            Logger.e("MainActivity", "Error parsing HTML page: ${e.message}", e)
         }
         return files
     }
@@ -421,29 +462,38 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun getFileType(url: String): String {
-        val extension = url.substringAfterLast(".").lowercase()
-        return when (extension) {
-            "mp3", "wav", "flac", "aac", "ogg", "m4a" -> "audio"
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm" -> "video"
-            "pdf" -> "document"
-            "zip", "rar", "7z" -> "archive"
-            else -> "file"
+        return fileTypeCache.get(url) ?: run {
+            val extension = url.substringAfterLast(".").lowercase()
+            val fileType = when (extension) {
+                "mp3", "wav", "flac", "aac", "ogg", "m4a" -> "audio"
+                "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm" -> "video"
+                "pdf" -> "document"
+                "zip", "rar", "7z" -> "archive"
+                else -> "file"
+            }
+            fileTypeCache.put(url, fileType)
+            fileType
         }
     }
     
     private fun getFileSize(url: String): String {
-        return try {
-            val connection = URL(url).openConnection()
-            connection.connectTimeout = 5000
-            connection.readTimeout = 5000
-            val contentLength = connection.contentLength
-            if (contentLength > 0) {
-                formatFileSize(contentLength.toLong())
-            } else {
+        return fileSizeCache.get(url) ?: run {
+            val fileSize = try {
+                val connection = URL(url).openConnection()
+                connection.connectTimeout = 3000 // Reduced timeout for faster response
+                connection.readTimeout = 3000
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) Advanced Video Downreamer")
+                val contentLength = connection.contentLength
+                if (contentLength > 0) {
+                    formatFileSize(contentLength.toLong())
+                } else {
+                    "Unknown size"
+                }
+            } catch (e: Exception) {
                 "Unknown size"
             }
-        } catch (e: Exception) {
-            "Unknown size"
+            fileSizeCache.put(url, fileSize)
+            fileSize
         }
     }
     
@@ -547,16 +597,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startDownloadForSelectedFiles() {
-        if (!isStorageAvailable()) {
-            showSnackbar("Storage not available. Please check your storage or SD card.")
+        Logger.d("MainActivity", "startDownloadForSelectedFiles started")
+        
+        if (!ErrorHandler.isStorageAvailable(this, viewModel.getDownloadDir().absolutePath)) {
+            val errorMessage = ErrorHandler.getUserFriendlyMessage(
+                SecurityException("Storage not available"), this
+            )
+            Logger.w("MainActivity", "Storage not available")
+            showSnackbar(errorMessage)
             return
         }
-        if (!isNetworkAvailable()) {
-            showSnackbar("No network connection. Please check your internet.")
+        if (!ErrorHandler.isNetworkAvailable(this)) {
+            val errorMessage = ErrorHandler.getUserFriendlyMessage(
+                ConnectException("No network connection"), this
+            )
+            Logger.w("MainActivity", "No network connection")
+            showSnackbar(errorMessage)
             return
         }
         val filesToDownload = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded() } ?: emptyList()
+        Logger.d("MainActivity", "Files to download: ${filesToDownload.size}")
+        
         if (filesToDownload.isEmpty()) {
+            Logger.i("MainActivity", "All selected files are already downloaded")
             showSnackbar("All selected files are already downloaded.")
             return
         }
@@ -565,35 +628,45 @@ class MainActivity : AppCompatActivity() {
             val adapter = recyclerViewFiles.adapter as? FileAdapter
             adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
             
-            // Start each download in parallel
-            lifecycleScope.launch {
+            // Start each download in parallel using optimized scope
+            downloadScope.launch {
                 try {
                     downloadFile(file)
                 } catch (e: Exception) {
-                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                    adapter?.updateProgressOnly(file.url, -1)
-                    adapter?.flushProgressUpdates()
-                    showSnackbar("Error downloading ${file.name}: ${e.message}")
+                    Logger.e("MainActivity", "Error downloading ${file.name}: ${e.message}", e)
+                    val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+                    withContext(Dispatchers.Main) {
+                        adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
+                        adapter?.updateProgressOnly(file.url, -1)
+                        adapter?.flushProgressUpdates()
+                        showSnackbar("Error downloading ${file.name}: $errorMessage")
+                    }
                 }
             }
         }
     }
 
     private suspend fun downloadFile(file: DownloadFile) = withContext(Dispatchers.IO) {
-        if (!isStorageAvailable()) {
-            runOnUiThread { showSnackbar("Storage not available. Please check your storage or SD card.") }
+        if (!ErrorHandler.isStorageAvailable(this@MainActivity, viewModel.getDownloadDir().absolutePath)) {
+            val errorMessage = ErrorHandler.getUserFriendlyMessage(
+                SecurityException("Storage not available"), this@MainActivity
+            )
+            runOnUiThread { showSnackbar(errorMessage) }
             return@withContext
         }
-        if (!isNetworkAvailable()) {
-            runOnUiThread { showSnackbar("No network connection. Please check your internet.") }
+        if (!ErrorHandler.isNetworkAvailable(this@MainActivity)) {
+            val errorMessage = ErrorHandler.getUserFriendlyMessage(
+                ConnectException("No network connection"), this@MainActivity
+            )
+            runOnUiThread { showSnackbar(errorMessage) }
             return@withContext
         }
         val downloadsDir = FileUtils.getDownloadDir(viewModel.currentStorageDir.value, file.subfolder)
         FileUtils.ensureDirExists(downloadsDir)
         val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
         val outputFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
-        Log.d("DownloadDebug", "Preparing to download: ${outputFile.absolutePath}")
-        Log.d("DownloadDebug", "Exists: ${outputFile.exists()}, IsFile: ${outputFile.isFile}, IsDir: ${outputFile.isDirectory}")
+        Logger.d("DownloadDebug", "Preparing to download: ${outputFile.absolutePath}")
+        Logger.d("DownloadDebug", "Exists: ${outputFile.exists()}, IsFile: ${outputFile.isFile}, IsDir: ${outputFile.isDirectory}")
         if (outputFile.exists()) {
             FileUtils.safeDelete(outputFile)
         }
@@ -601,7 +674,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 showSnackbar("Cannot download: File or directory still exists after deletion. Please check storage or restart device.")
             }
-            Log.e("DownloadDebug", "File still exists after deletion: ${outputFile.absolutePath}")
+            Logger.e("DownloadDebug", "File still exists after deletion: ${outputFile.absolutePath}")
             return@withContext
         }
         try {
@@ -618,7 +691,7 @@ class MainActivity : AppCompatActivity() {
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) Advanced Video Downreamer")
             val inputStream = connection.getInputStream()
             val outputStream = FileOutputStream(outputFile, false)
-            val buffer = ByteArray(32768) // Doubled buffer size for better performance
+            val buffer = ByteArray(memoryManager.getRecommendedBufferSize(this@MainActivity)) // Memory-aware buffer size
             var bytesRead: Int
             var totalBytesRead = 0L
             val contentLength = connection.contentLength
@@ -627,8 +700,8 @@ class MainActivity : AppCompatActivity() {
                 totalBytesRead += bytesRead
                 if (contentLength > 0) {
                     val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                    // Update progress in 5% increments for better performance
-                    val roundedProgress = (progress / 5) * 5
+                    // Update progress in 2% increments for better responsiveness
+                    val roundedProgress = (progress / 2) * 2
                     
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
@@ -664,7 +737,7 @@ class MainActivity : AppCompatActivity() {
                 adapter?.flushProgressUpdates()
                 showSnackbar("Error downloading ${file.name}: ${e.message}")
             }
-            Log.e("DownloadDebug", "Error downloading file: ${e.message}", e)
+            Logger.e("DownloadDebug", "Error downloading file: ${e.message}", e)
         }
     }
     
@@ -824,9 +897,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val downloadsDir = viewModel.getDownloadDir()
             val isSdCard = downloadsDir.absolutePath.startsWith("/storage/") && !downloadsDir.absolutePath.startsWith("/storage/emulated/0/")
-            val playlistFile: File
-            var playlistUri: Uri? = null
-            if (isSdCard) {
+            val playlistUri: Uri? = if (isSdCard) {
                 // Use SAF to create playlist file on SD card
                 if (sdCardUri == null) {
                     showSnackbar("SD card access required. Please select the SD card folder.")
@@ -842,23 +913,24 @@ class MainActivity : AppCompatActivity() {
                 val docUri = DocumentsContract.createDocument(contentResolver, parentDocumentUri, "audio/x-mpegurl", playlistName)
                 if (docUri != null) {
                     contentResolver.openOutputStream(docUri)?.use { it.write(playlistContent.toByteArray()) }
-                    playlistUri = docUri
                     lastPlaylistUri = docUri // Track for cleanup
                     lastPlaylistFile = null
+                    docUri
                 } else {
                     showSnackbar("Failed to create playlist file on SD card.")
                     return
                 }
             } else {
                 // Internal storage: use FileProvider
-                playlistFile = createPlaylistFile(files)
-                playlistUri = FileProvider.getUriForFile(
+                val playlistFile = createPlaylistFile(files)
+                val uri = FileProvider.getUriForFile(
                     this,
                     "${com.downloadmanager.app.BuildConfig.APPLICATION_ID}.fileprovider",
                     playlistFile
                 )
                 lastPlaylistFile = playlistFile // Track for cleanup
                 lastPlaylistUri = null
+                uri
             }
             val intent = Intent(Intent.ACTION_VIEW)
             intent.setDataAndType(playlistUri, "audio/x-mpegurl")
@@ -983,61 +1055,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun getAvailableStorageDirs(): List<Pair<String, File>> {
         val dirs = mutableListOf<Pair<String, File>>()
-        
         // Internal storage
         val internal = File(android.os.Environment.getExternalStoragePublicDirectory(
             android.os.Environment.DIRECTORY_DOWNLOADS), "DownloadManager")
         dirs.add(Pair("Internal Storage", internal))
-        
-        // Check all external storage directories (including HarmonyOS SD cards)
+        // SD card (if available)
         val externalDirs = getExternalFilesDirs(null)
-        for (i in externalDirs.indices) {
-            val dir = externalDirs[i]
-            if (dir != null) {
-                val path = dir.absolutePath
-                val storageName = when {
-                    i == 0 -> "Primary Storage"
-                    path.contains("/storage/emulated/0/") -> "Internal Storage (Emulated)"
-                    path.contains("/storage/") && !path.contains("/storage/emulated/0/") -> {
-                        // This is likely an SD card or external storage
-                        val sdRootPath = path.substringBefore("/Android/")
-                        val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
-                        if (sdDownloadManager.exists() || sdDownloadManager.mkdirs()) {
-                            "SD Card / External Storage"
-                        } else {
-                            "External Storage (${sdRootPath})"
-                        }
-                    }
-                    else -> "Storage ${i + 1}"
-                }
-                
-                val storageDir = if (path.contains("/storage/") && !path.contains("/storage/emulated/0/")) {
-                    // External storage - use public directory
-                    val sdRootPath = path.substringBefore("/Android/")
-                    File(sdRootPath, "Download/DownloadManager")
-                } else {
-                    // Internal storage - use app-specific directory
-                    File(dir, "DownloadManager")
-                }
-                
-                dirs.add(Pair(storageName, storageDir))
-            }
+        if (externalDirs.size > 1 && externalDirs[1] != null) {
+            val sdRoot = File(externalDirs[1].absolutePath)
+            val sdRootPath = sdRoot.absolutePath.substringBefore("/Android/")
+            val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
+            dirs.add(Pair("SD Card", sdDownloadManager))
         }
-        
-        // Add HarmonyOS specific paths if available
-        val harmonyPaths = listOf(
-            "/storage/sdcard1/Download/DownloadManager",
-            "/storage/extSdCard/Download/DownloadManager",
-            "/storage/0000-0000/Download/DownloadManager"
-        )
-        
-        for (path in harmonyPaths) {
-            val harmonyDir = File(path)
-            if (harmonyDir.exists() || harmonyDir.mkdirs()) {
-                dirs.add(Pair("HarmonyOS SD Card", harmonyDir))
-            }
-        }
-        
         return dirs
     }
 
@@ -1053,58 +1082,21 @@ class MainActivity : AppCompatActivity() {
         val totalSpace = dir.totalSpace
         val freeSpaceFormatted = formatFileSize(freeSpace)
         val totalSpaceFormatted = formatFileSize(totalSpace)
-        
-        // Add debug info for HarmonyOS devices
-        val debugInfo = if (BuildConfig.DEBUG) {
-            val externalDirs = getExternalFilesDirs(null)
-            val debugPaths = externalDirs.mapIndexed { index, dir ->
-                "Storage $index: ${dir?.absolutePath ?: "null"}"
-            }.joinToString("\n")
-            "\n\nDebug Info:\n$debugPaths"
-        } else ""
-        
-        textViewStorageInfo.text = "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted$debugInfo"
+        textViewStorageInfo.text = "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted"
     }
 
     private fun showStorageSelectionDialog() {
         val dirs = getAvailableStorageDirs()
         val names = dirs.map { it.first }.toTypedArray()
         val current = dirs.indexOfFirst { it.second.absolutePath == viewModel.getDownloadDir().absolutePath }
-        
         android.app.AlertDialog.Builder(this)
             .setTitle("Select Storage Location")
-            .setMessage("Choose where to save your downloads.\n\nNote: On HarmonyOS devices, SD cards may appear as 'Internal Storage' or 'External Storage'.")
-            .setSingleChoiceItems(names, current) { dialog: android.content.DialogInterface, which: Int ->
+            .setSingleChoiceItems(names, current) { dialog, which ->
                 val selectedDir = dirs[which].second
                 saveStorageDir(selectedDir)
-                showSnackbar("Storage updated to: ${dirs[which].first}")
                 dialog.dismiss()
             }
-            .setPositiveButton("Show Details") { _, _ ->
-                showStorageDetailsDialog(dirs)
-            }
             .setNegativeButton("Cancel", null)
-            .show()
-    }
-    
-    private fun showStorageDetailsDialog(dirs: List<Pair<String, File>>) {
-        val details = dirs.map { (name, dir) ->
-            val freeSpace = if (dir.exists()) {
-                val free = dir.freeSpace
-                val total = dir.totalSpace
-                val freeFormatted = formatFileSize(free)
-                val totalFormatted = formatFileSize(total)
-                val percentage = if (total > 0) ((free * 100) / total).toInt() else 0
-                "$name\n$freeFormatted free of $totalFormatted ($percentage% free)\n${dir.absolutePath}"
-            } else {
-                "$name\n(Will be created)\n${dir.absolutePath}"
-            }
-        }.joinToString("\n\n")
-        
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Storage Details")
-            .setMessage(details)
-            .setPositiveButton("OK", null)
             .show()
     }
 
@@ -1137,6 +1129,14 @@ class MainActivity : AppCompatActivity() {
         // Clean up handlers to prevent memory leaks
         progressUpdateHandler.removeCallbacks(progressUpdateRunnable)
         mainHandler.removeCallbacksAndMessages(null)
+        
+        // Cancel all download coroutines
+        downloadScope.cancel()
+        
+        // Clear caches to free memory
+        fileTypeCache.clear()
+        fileSizeCache.clear()
+        progressUpdateQueue.clear()
     }
 
     private fun showSnackbar(message: String, long: Boolean = false) {
@@ -1158,18 +1158,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun isOnSdCard(file: File): Boolean {
         val path = file.absolutePath
-        // Check for external storage paths (including HarmonyOS SD cards)
-        return when {
-            // Standard external storage (not emulated internal)
-            path.startsWith("/storage/") && !path.startsWith("/storage/emulated/0/") -> true
-            // HarmonyOS specific SD card paths
-            path.startsWith("/storage/sdcard1/") -> true
-            path.startsWith("/storage/extSdCard/") -> true
-            path.startsWith("/storage/0000-0000/") -> true
-            // Check if it's in a different storage mount point
-            path.contains("/storage/") && !path.contains("/emulated/") -> true
-            else -> false
-        }
+        return path.startsWith("/storage/") && !path.startsWith("/storage/emulated/0/")
     }
 
     private fun getSdCardContentUri(file: File): Uri? {

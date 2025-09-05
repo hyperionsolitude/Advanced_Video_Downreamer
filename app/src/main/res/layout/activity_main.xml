@@ -267,10 +267,11 @@
                 <com.google.android.material.progressindicator.LinearProgressIndicator
                     android:id="@+id/progressBar"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="6dp"
                     android:visibility="gone"
                     android:layout_marginBottom="4dp"
-                    style="@style/Widget.MaterialComponents.LinearProgressIndicator" />
+                    app:indicatorColor="@color/progress_fill"
+                    app:trackColor="@color/progress_background" />
             </LinearLayout>
         </ScrollView>
 

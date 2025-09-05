@@ -22,6 +22,8 @@
 
 # Keep JSoup classes (required for HTML parsing)
 -keep class org.jsoup.** { *; }
+-keep class javax.annotation.** { *; }
+-keep class javax.annotation.meta.** { *; }
 
 # Keep Android components
 -keep class androidx.** { *; }
@@ -29,6 +31,56 @@
 
 # Keep app classes
 -keep class com.downloadmanager.app.** { *; }
+
+# Keep data classes and models
+-keep class com.downloadmanager.app.model.** { *; }
+-keep class com.downloadmanager.app.adapter.** { *; }
+-keep class com.downloadmanager.app.viewmodel.** { *; }
+
+# Keep ViewBinding classes
+-keep class com.downloadmanager.app.databinding.** { *; }
+
+# Keep enum classes
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# Keep Parcelable classes
+-keep class * implements android.os.Parcelable {
+    public static final android.os.Parcelable$Creator *;
+}
+
+# Keep Serializable classes
+-keepclassmembers class * implements java.io.Serializable {
+    static final long serialVersionUID;
+    private static final java.io.ObjectStreamField[] serialPersistentFields;
+    private void writeObject(java.io.ObjectOutputStream);
+    private void readObject(java.io.ObjectInputStream);
+    java.lang.Object writeReplace();
+    java.lang.Object readResolve();
+}
+
+# Keep native methods
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# Keep custom views
+-keep public class * extends android.view.View {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+
+# Keep custom view constructors
+-keepclasseswithmembers class * {
+    public <init>(android.content.Context, android.util.AttributeSet);
+}
+
+-keepclasseswithmembers class * {
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
 
 # Optimize for size
 -optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*

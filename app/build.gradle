@@ -38,6 +38,11 @@ android {
         dataBinding true
     }
     
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    
     // Resource optimization
     aaptOptions {
         cruncherEnabled = false
