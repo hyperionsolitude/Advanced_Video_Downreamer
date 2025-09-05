@@ -983,18 +983,61 @@ class MainActivity : AppCompatActivity() {
 
     private fun getAvailableStorageDirs(): List<Pair<String, File>> {
         val dirs = mutableListOf<Pair<String, File>>()
+        
         // Internal storage
         val internal = File(android.os.Environment.getExternalStoragePublicDirectory(
             android.os.Environment.DIRECTORY_DOWNLOADS), "DownloadManager")
         dirs.add(Pair("Internal Storage", internal))
-        // SD card (if available)
+        
+        // Check all external storage directories (including HarmonyOS SD cards)
         val externalDirs = getExternalFilesDirs(null)
-        if (externalDirs.size > 1 && externalDirs[1] != null) {
-            val sdRoot = File(externalDirs[1].absolutePath)
-            val sdRootPath = sdRoot.absolutePath.substringBefore("/Android/")
-            val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
-            dirs.add(Pair("SD Card", sdDownloadManager))
+        for (i in externalDirs.indices) {
+            val dir = externalDirs[i]
+            if (dir != null) {
+                val path = dir.absolutePath
+                val storageName = when {
+                    i == 0 -> "Primary Storage"
+                    path.contains("/storage/emulated/0/") -> "Internal Storage (Emulated)"
+                    path.contains("/storage/") && !path.contains("/storage/emulated/0/") -> {
+                        // This is likely an SD card or external storage
+                        val sdRootPath = path.substringBefore("/Android/")
+                        val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
+                        if (sdDownloadManager.exists() || sdDownloadManager.mkdirs()) {
+                            "SD Card / External Storage"
+                        } else {
+                            "External Storage (${sdRootPath})"
+                        }
+                    }
+                    else -> "Storage ${i + 1}"
+                }
+                
+                val storageDir = if (path.contains("/storage/") && !path.contains("/storage/emulated/0/")) {
+                    // External storage - use public directory
+                    val sdRootPath = path.substringBefore("/Android/")
+                    File(sdRootPath, "Download/DownloadManager")
+                } else {
+                    // Internal storage - use app-specific directory
+                    File(dir, "DownloadManager")
+                }
+                
+                dirs.add(Pair(storageName, storageDir))
+            }
         }
+        
+        // Add HarmonyOS specific paths if available
+        val harmonyPaths = listOf(
+            "/storage/sdcard1/Download/DownloadManager",
+            "/storage/extSdCard/Download/DownloadManager",
+            "/storage/0000-0000/Download/DownloadManager"
+        )
+        
+        for (path in harmonyPaths) {
+            val harmonyDir = File(path)
+            if (harmonyDir.exists() || harmonyDir.mkdirs()) {
+                dirs.add(Pair("HarmonyOS SD Card", harmonyDir))
+            }
+        }
+        
         return dirs
     }
 
@@ -1010,21 +1053,58 @@ class MainActivity : AppCompatActivity() {
         val totalSpace = dir.totalSpace
         val freeSpaceFormatted = formatFileSize(freeSpace)
         val totalSpaceFormatted = formatFileSize(totalSpace)
-        textViewStorageInfo.text = "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted"
+        
+        // Add debug info for HarmonyOS devices
+        val debugInfo = if (BuildConfig.DEBUG) {
+            val externalDirs = getExternalFilesDirs(null)
+            val debugPaths = externalDirs.mapIndexed { index, dir ->
+                "Storage $index: ${dir?.absolutePath ?: "null"}"
+            }.joinToString("\n")
+            "\n\nDebug Info:\n$debugPaths"
+        } else ""
+        
+        textViewStorageInfo.text = "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted$debugInfo"
     }
 
     private fun showStorageSelectionDialog() {
         val dirs = getAvailableStorageDirs()
         val names = dirs.map { it.first }.toTypedArray()
         val current = dirs.indexOfFirst { it.second.absolutePath == viewModel.getDownloadDir().absolutePath }
+        
         android.app.AlertDialog.Builder(this)
             .setTitle("Select Storage Location")
-            .setSingleChoiceItems(names, current) { dialog, which ->
+            .setMessage("Choose where to save your downloads.\n\nNote: On HarmonyOS devices, SD cards may appear as 'Internal Storage' or 'External Storage'.")
+            .setSingleChoiceItems(names, current) { dialog: android.content.DialogInterface, which: Int ->
                 val selectedDir = dirs[which].second
                 saveStorageDir(selectedDir)
+                showSnackbar("Storage updated to: ${dirs[which].first}")
                 dialog.dismiss()
             }
+            .setPositiveButton("Show Details") { _, _ ->
+                showStorageDetailsDialog(dirs)
+            }
             .setNegativeButton("Cancel", null)
+            .show()
+    }
+    
+    private fun showStorageDetailsDialog(dirs: List<Pair<String, File>>) {
+        val details = dirs.map { (name, dir) ->
+            val freeSpace = if (dir.exists()) {
+                val free = dir.freeSpace
+                val total = dir.totalSpace
+                val freeFormatted = formatFileSize(free)
+                val totalFormatted = formatFileSize(total)
+                val percentage = if (total > 0) ((free * 100) / total).toInt() else 0
+                "$name\n$freeFormatted free of $totalFormatted ($percentage% free)\n${dir.absolutePath}"
+            } else {
+                "$name\n(Will be created)\n${dir.absolutePath}"
+            }
+        }.joinToString("\n\n")
+        
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Storage Details")
+            .setMessage(details)
+            .setPositiveButton("OK", null)
             .show()
     }
 
@@ -1078,7 +1158,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun isOnSdCard(file: File): Boolean {
         val path = file.absolutePath
-        return path.startsWith("/storage/") && !path.startsWith("/storage/emulated/0/")
+        // Check for external storage paths (including HarmonyOS SD cards)
+        return when {
+            // Standard external storage (not emulated internal)
+            path.startsWith("/storage/") && !path.startsWith("/storage/emulated/0/") -> true
+            // HarmonyOS specific SD card paths
+            path.startsWith("/storage/sdcard1/") -> true
+            path.startsWith("/storage/extSdCard/") -> true
+            path.startsWith("/storage/0000-0000/") -> true
+            // Check if it's in a different storage mount point
+            path.contains("/storage/") && !path.contains("/emulated/") -> true
+            else -> false
+        }
     }
 
     private fun getSdCardContentUri(file: File): Uri? {
