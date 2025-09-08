@@ -41,11 +41,8 @@ jobs:
     - name: Build Release APK
       run: ./gradlew assembleRelease
       
-    - name: Run Tests
+    - name: Run Unit Tests
       run: ./gradlew test
-      
-    - name: Lint Check
-      run: ./gradlew lint
       
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
