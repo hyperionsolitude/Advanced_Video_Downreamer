@@ -9,7 +9,7 @@ import com.downloadmanager.app.BuildConfig
  */
 object Logger {
     private const val TAG_PREFIX = "AdvancedVideoDownreamer"
-    
+
     fun d(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {
             if (throwable != null) {
@@ -19,7 +19,7 @@ object Logger {
             }
         }
     }
-    
+
     fun i(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {
             if (throwable != null) {
@@ -29,7 +29,7 @@ object Logger {
             }
         }
     }
-    
+
     fun w(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {
             if (throwable != null) {
@@ -39,7 +39,7 @@ object Logger {
             }
         }
     }
-    
+
     fun e(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {
             if (throwable != null) {
@@ -49,7 +49,7 @@ object Logger {
             }
         }
     }
-    
+
     fun v(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {
             if (throwable != null) {

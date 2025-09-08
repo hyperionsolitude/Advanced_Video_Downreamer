@@ -1,5 +1,7 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'org.jlleitschuh.gradle.ktlint'
+apply plugin: 'io.gitlab.arturbosch.detekt'
 
 android {
     namespace 'com.downloadmanager.app'
@@ -64,4 +66,20 @@ dependencies {
     implementation 'org.jsoup:jsoup:1.15.4'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.5.1'
     implementation 'androidx.activity:activity-ktx:1.6.1'
+    detektPlugins "io.gitlab.arturbosch.detekt:detekt-formatting:1.23.6"
 } 
+
+// ktlint configuration
+ktlint {
+    android = true
+    ignoreFailures = false
+}
+
+// detekt configuration
+detekt {
+    toolVersion = "1.23.6"
+    config = files("${rootProject.projectDir}/detekt.yml")
+    buildUponDefaultConfig = true
+    allRules = false
+    autoCorrect = true
+}

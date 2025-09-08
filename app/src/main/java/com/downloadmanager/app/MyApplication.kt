@@ -7,4 +7,4 @@ class MyApplication : Application() {
         super.onCreate()
         // Initialize any app-wide configurations here
     }
-} 
+}

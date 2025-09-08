@@ -1,54 +1,56 @@
 package com.downloadmanager.app
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Bundle
-import android.widget.*
+import android.os.Handler
+import android.os.Looper
+import android.provider.DocumentsContract
+import android.util.Log
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import android.os.Handler
-import android.os.Looper
-import android.view.View
-import android.util.Log
-import kotlinx.coroutines.*
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
-import org.jsoup.select.Elements
+import com.downloadmanager.app.adapter.FileAdapter
+import com.downloadmanager.app.databinding.ActivityMainBinding
+import com.downloadmanager.app.model.DownloadFile
+import com.downloadmanager.app.model.FileUtils
+import com.downloadmanager.app.utils.ErrorHandler
+import com.downloadmanager.app.utils.Logger
+import com.downloadmanager.app.utils.MemoryManager
+import com.downloadmanager.app.viewmodel.MainViewModel
+import com.google.android.material.snackbar.Snackbar
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URL
-import java.net.URLConnection
-import java.util.concurrent.Executors
-import com.downloadmanager.app.adapter.FileAdapter
-import com.downloadmanager.app.model.DownloadFile
-import androidx.core.content.FileProvider
-import com.downloadmanager.app.BuildConfig
-import androidx.lifecycle.lifecycleScope
-import com.downloadmanager.app.model.FileUtils
-import com.google.android.material.snackbar.Snackbar
-import androidx.activity.result.contract.ActivityResultContracts
-import com.downloadmanager.app.databinding.ActivityMainBinding
-import androidx.activity.viewModels
-import com.downloadmanager.app.viewmodel.MainViewModel
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.content.Context
-import android.net.Uri
-import android.provider.DocumentsContract
-import android.content.SharedPreferences
-import com.downloadmanager.app.utils.Logger
-import com.downloadmanager.app.utils.ErrorHandler
-import com.downloadmanager.app.utils.MemoryManager
 import java.net.ConnectException
+import java.net.URL
+import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
 
 class MainActivity : AppCompatActivity() {
-    
+
     private lateinit var editTextUrl: EditText
 
     private lateinit var buttonFetch: Button
@@ -67,17 +69,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textViewSelectedSize: TextView
     private lateinit var buttonInvertSelection: com.google.android.material.button.MaterialButton
     private lateinit var buttonSelectNone: com.google.android.material.button.MaterialButton
-    
+
+    @Suppress("UnusedPrivateProperty")
     private val PERMISSION_REQUEST_CODE = 123
     private val REQUIRED_PERMISSIONS = arrayOf(
         Manifest.permission.WRITE_EXTERNAL_STORAGE,
         Manifest.permission.READ_EXTERNAL_STORAGE
     )
-    
+
     private val viewModel: MainViewModel by viewModels()
 
     private val requestPermissionsLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
             val allGranted = permissions.all { it.value }
             if (allGranted) {
                 showSnackbar("All permissions granted!")
@@ -93,7 +98,7 @@ class MainActivity : AppCompatActivity() {
     private val KEY_SD_URI = "sd_card_uri"
     private lateinit var prefs: SharedPreferences
     private var sdCardUri: Uri? = null
-    
+
     // Performance optimization: Throttle UI updates
     private val progressUpdateHandler = Handler(Looper.getMainLooper())
     private val progressUpdateRunnable = object : Runnable {
@@ -106,14 +111,14 @@ class MainActivity : AppCompatActivity() {
     private var lastProgressUpdate = 0L
     private val PROGRESS_UPDATE_INTERVAL = 200L // Optimized to 200ms for better responsiveness
     private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
-    
+
     // Performance optimization: Coroutine scope for downloads
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
+
     // Performance optimization: Memory-aware caches
     private val fileTypeCache = MemoryManager.MemoryAwareCache<String, String>()
     private val fileSizeCache = MemoryManager.MemoryAwareCache<String, String>()
-    
+
     // Memory management
     private val memoryManager = MemoryManager
     private val openDocumentTreeLauncher =
@@ -138,28 +143,31 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.d("MainActivity", "onCreate started")
-        
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         sdCardUri = prefs.getString(KEY_SD_URI, null)?.let { Uri.parse(it) }
-        
+
         Logger.d("MainActivity", "Memory usage: ${memoryManager.getMemoryUsagePercentage(this)}%")
-        Logger.d("MainActivity", "Available memory: ${memoryManager.getAvailableMemory(this) / 1024 / 1024}MB")
-        
+        Logger.d(
+            "MainActivity",
+            "Available memory: ${memoryManager.getAvailableMemory(this) / 1024 / 1024}MB"
+        )
+
         initializeViews()
         setupClickListeners()
         observeViewModel()
         requestPermissionsIfNeeded()
         loadStorageDir()
         updateStorageInfo()
-        
+
         Logger.d("MainActivity", "onCreate completed")
     }
-    
+
     override fun onResume() {
         super.onResume()
-        
+
         // Memory management: Clear caches if low memory
         if (memoryManager.shouldClearCache(this)) {
             fileTypeCache.clear()
@@ -167,14 +175,22 @@ class MainActivity : AppCompatActivity() {
             memoryManager.forceGarbageCollection()
             Logger.d("MemoryManager", "Cleared caches due to low memory")
         }
-        
+
         // Delete any zero-length files and partial downloads for all current files
         for (file in viewModel.currentFiles.value ?: emptyList()) {
             val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
-            FileUtils.deleteFileIfZeroLength(viewModel.currentStorageDir.value, fileName, file.subfolder)
+            FileUtils.deleteFileIfZeroLength(
+                viewModel.currentStorageDir.value,
+                fileName,
+                file.subfolder
+            )
             // Also clean up partial downloads (files that exist but are not complete)
             if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
-                val localFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                val localFile = FileUtils.getLocalFile(
+                    viewModel.currentStorageDir.value,
+                    fileName,
+                    file.subfolder
+                )
                 if (localFile.exists()) {
                     FileUtils.safeDelete(localFile)
                 }
@@ -204,7 +220,7 @@ class MainActivity : AppCompatActivity() {
             Log.e("Playlist", "Error cleaning up playlist: ${e.message}", e)
         }
     }
-    
+
     private fun initializeViews() {
         // Replace all findViewById with binding references
         // Example: editTextUrl = binding.editTextUrl
@@ -226,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         textViewSelectedSize = binding.textViewSelectedSize
         buttonInvertSelection = binding.buttonInvertSelection
         buttonSelectNone = binding.buttonSelectNone
-        
+
         // Setup RecyclerView
         recyclerViewFiles.layoutManager = LinearLayoutManager(this)
         val adapter = FileAdapter { file, isSelected ->
@@ -234,25 +250,37 @@ class MainActivity : AppCompatActivity() {
         }
         recyclerViewFiles.adapter = adapter
         adapter.attachRecyclerView(recyclerViewFiles)
-        
+
         // Setup SwipeRefreshLayout
         swipeRefresh.setOnRefreshListener {
             val url = editTextUrl.text.toString().trim()
             if (url.isNotEmpty()) {
                 fetchFiles(url)
-        } else {
+            } else {
                 swipeRefresh.isRefreshing = false
             }
         }
-        
+
         // Setup filter
-        editTextFilter.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                filterFiles(s.toString())
+        editTextFilter.addTextChangedListener(
+            object : android.text.TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int,
+                ) { /* no-op */ }
+                override fun onTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    before: Int,
+                    count: Int,
+                ) { /* no-op */ }
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    filterFiles(s.toString())
+                }
             }
-        })
+        )
     }
 
     private fun setupClickListeners() {
@@ -284,41 +312,42 @@ class MainActivity : AppCompatActivity() {
         buttonSelectAll.setOnClickListener {
             selectAllFiles()
         }
-        
+
         buttonDeselectAll.setOnClickListener {
             deselectAllFiles()
         }
-        
+
         buttonInvertSelection.setOnClickListener {
             invertSelection()
         }
         buttonSelectNone.setOnClickListener {
             deselectAllFiles()
         }
-        
+
         buttonChangeStorage.setOnClickListener {
             showStorageSelectionDialog()
         }
     }
-    
+
     private fun fetchFiles(url: String) {
         Logger.d("MainActivity", "fetchFiles started for URL: $url")
-        
+
         if (!ErrorHandler.isNetworkAvailable(this)) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                ConnectException("No network connection"), this
+                ConnectException("No network connection"),
+                this
             )
             Logger.w("MainActivity", "No network connection available")
             showSnackbar(errorMessage)
             swipeRefresh.isRefreshing = false
             return
         }
-        
+
         Logger.d("MainActivity", "Network available, starting file fetch")
         progressBar.visibility = View.VISIBLE
         buttonFetch.isEnabled = false
         swipeRefresh.isRefreshing = true
-        
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val files = when {
@@ -335,36 +364,43 @@ class MainActivity : AppCompatActivity() {
                         fetchFilesFromHtmlPage(url)
                     }
                 }
-                
+
                 val filteredFiles = files
-                
+
                 // Delete any zero-length files and partial downloads for all fetched files
                 for (file in filteredFiles) {
                     val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
-                    FileUtils.deleteFileIfZeroLength(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                    FileUtils.deleteFileIfZeroLength(
+                        viewModel.currentStorageDir.value,
+                        fileName,
+                        file.subfolder
+                    )
                     // Also clean up partial downloads (files that exist but are not complete)
                     if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
-                        val localFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
+                        val localFile = FileUtils.getLocalFile(
+                            viewModel.currentStorageDir.value,
+                            fileName,
+                            file.subfolder
+                        )
                         if (localFile.exists()) {
                             FileUtils.safeDelete(localFile)
                         }
                     }
                 }
-                
+
                 withContext(Dispatchers.Main) {
                     Logger.d("MainActivity", "Successfully fetched ${filteredFiles.size} files")
                     viewModel.setFiles(filteredFiles)
-                    
+
                     textViewFileCount.text = "Files: ${viewModel.currentFiles.value?.size ?: 0}"
                     textViewSelectedCount.text = "Selected: 0"
-                    
+
                     progressBar.visibility = View.GONE
                     buttonFetch.isEnabled = true
                     swipeRefresh.isRefreshing = false
-                    
+
                     showSnackbar("Fetched ${filteredFiles.size} files")
                 }
-                
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error fetching files: ${e.message}", e)
                 val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
@@ -378,7 +414,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    
+
     private fun fetchFilesFromDirectory(url: String): List<DownloadFile> {
         val files = mutableListOf<DownloadFile>()
         val subfolder = getSubfolderNameFromUrl()
@@ -445,22 +481,24 @@ class MainActivity : AppCompatActivity() {
         val subfolder = getSubfolderNameFromUrl()
         return DownloadFile(fileName, url, fileSize, fileType, subfolder)
     }
-    
+
     private fun isValidFileUrl(url: String): Boolean {
-        val fileExtensions = listOf(".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
-                                   ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a",
-                                   ".pdf", ".zip", ".rar", ".7z", ".txt", ".doc", ".docx")
+        val fileExtensions = listOf(
+            ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+            ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a",
+            ".pdf", ".zip", ".rar", ".7z", ".txt", ".doc", ".docx"
+        )
         return fileExtensions.any { url.lowercase().contains(it) }
     }
-    
+
     private fun isDirectFileUrl(url: String): Boolean {
         return isValidFileUrl(url) && !url.endsWith("/")
     }
-    
+
     private fun isDirectoryUrl(url: String): Boolean {
         return url.endsWith("/") || !url.contains(".")
     }
-    
+
     private fun getFileType(url: String): String {
         return fileTypeCache.get(url) ?: run {
             val extension = url.substringAfterLast(".").lowercase()
@@ -475,14 +513,17 @@ class MainActivity : AppCompatActivity() {
             fileType
         }
     }
-    
+
     private fun getFileSize(url: String): String {
         return fileSizeCache.get(url) ?: run {
             val fileSize = try {
                 val connection = URL(url).openConnection()
                 connection.connectTimeout = 3000 // Reduced timeout for faster response
                 connection.readTimeout = 3000
-                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) Advanced Video Downreamer")
+                connection.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Android) Advanced Video Downreamer"
+                )
                 val contentLength = connection.contentLength
                 if (contentLength > 0) {
                     formatFileSize(contentLength.toLong())
@@ -496,36 +537,51 @@ class MainActivity : AppCompatActivity() {
             fileSize
         }
     }
-    
+
     private fun formatFileSize(size: Long): String {
         return when {
             size < 1024 -> "$size B"
-            size < 1024 * 1024 -> String.format("%.1f KB", size / 1024.0)
-            size < 1024 * 1024 * 1024 -> String.format("%.1f MB", size / (1024.0 * 1024.0))
-            else -> String.format("%.2f GB", size / (1024.0 * 1024.0 * 1024.0))
+            size < 1024 * 1024 ->
+                String.format(Locale.US, "%.1f KB", size / 1024.0)
+            size < 1024 * 1024 * 1024 ->
+                String.format(
+                    Locale.US,
+                    "%.1f MB",
+                    size / (1024.0 * 1024.0)
+                )
+            else ->
+                String.format(
+                    Locale.US,
+                    "%.2f GB",
+                    size / (1024.0 * 1024.0 * 1024.0)
+                )
         }
     }
-    
+
     private fun handleFileSelection(file: DownloadFile, isSelected: Boolean) {
         if (isSelected) {
             viewModel.selectFile(file.url)
         } else {
             viewModel.deselectFile(file.url)
         }
-        textViewSelectedCount.text = "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
+        textViewSelectedCount.text =
+            "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
         updateActionButtons()
         updateSelectedSizeInfo()
     }
-    
+
     private fun selectAllFiles() {
-        viewModel.setSelectedFiles(viewModel.currentFiles.value?.map { it.url }?.toSet() ?: emptySet())
+        viewModel.setSelectedFiles(
+            viewModel.currentFiles.value?.map { it.url }?.toSet() ?: emptySet()
+        )
         val adapter = recyclerViewFiles.adapter as? FileAdapter
         adapter?.selectAll()
-        textViewSelectedCount.text = "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
+        textViewSelectedCount.text =
+            "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
         updateActionButtons()
         updateSelectedSizeInfo()
     }
-    
+
     private fun deselectAllFiles() {
         viewModel.clearSelection()
         val adapter = recyclerViewFiles.adapter as? FileAdapter
@@ -550,7 +606,7 @@ class MainActivity : AppCompatActivity() {
         updateActionButtons()
         updateSelectedSizeInfo()
     }
-    
+
     private fun filterFiles(query: String) {
         if (query.isEmpty()) {
             val adapter = recyclerViewFiles.adapter as? FileAdapter
@@ -558,28 +614,31 @@ class MainActivity : AppCompatActivity() {
         } else {
             val filteredFiles = viewModel.currentFiles.value?.filter { file ->
                 file.name.contains(query, ignoreCase = true) ||
-                file.type.contains(query, ignoreCase = true) ||
-                file.size.contains(query, ignoreCase = true)
+                    file.type.contains(query, ignoreCase = true) ||
+                    file.size.contains(query, ignoreCase = true)
             } ?: emptyList()
             val adapter = recyclerViewFiles.adapter as? FileAdapter
             adapter?.updateFiles(filteredFiles)
         }
     }
-    
+
     private fun updateActionButtons() {
         val hasSelection = viewModel.selectedFiles.value?.isNotEmpty() == true
         buttonDownload.isEnabled = hasSelection
         buttonStream.isEnabled = hasSelection
     }
-    
+
     private fun updateSelectedSizeInfo() {
-        val selectedFileList = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true } ?: emptyList()
+        val selectedFileList = viewModel.currentFiles.value?.filter {
+            viewModel.selectedFiles.value?.contains(it.url) == true
+        } ?: emptyList()
         val totalBytes = selectedFileList.sumOf { parseFileSizeToBytes(it.size) }
         textViewSelectedSize.text = "Total size: ${formatFileSize(totalBytes)}"
         val freeSpace = viewModel.getDownloadDir().freeSpace
         if (totalBytes > 0 && totalBytes > freeSpace) {
             textViewSelectedSize.setTextColor(android.graphics.Color.RED)
-            textViewSelectedSize.text = "Total size: ${formatFileSize(totalBytes)} (Not enough space!)"
+            textViewSelectedSize.text =
+                "Total size: ${formatFileSize(totalBytes)} (Not enough space!)"
         } else {
             textViewSelectedSize.setTextColor(android.graphics.Color.WHITE)
         }
@@ -588,20 +647,32 @@ class MainActivity : AppCompatActivity() {
     private fun parseFileSizeToBytes(sizeStr: String): Long {
         val s = sizeStr.trim().lowercase()
         return when {
-            s.endsWith("gb") -> ((s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024 * 1024).toLong()
-            s.endsWith("mb") -> ((s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024).toLong()
-            s.endsWith("kb") -> ((s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) * 1024).toLong()
-            s.endsWith("b") -> (s.removeSuffix("b").trim().toDoubleOrNull() ?: 0.0).toLong()
+            s.endsWith("gb") -> (
+                (s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) *
+                    1024 * 1024 * 1024
+                ).toLong()
+            s.endsWith("mb") -> (
+                (s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) *
+                    1024 * 1024
+                ).toLong()
+            s.endsWith("kb") -> (
+                (s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) *
+                    1024
+                ).toLong()
+            s.endsWith("b") -> (
+                s.removeSuffix("b").trim().toDoubleOrNull() ?: 0.0
+                ).toLong()
             else -> 0L
         }
     }
 
     private fun startDownloadForSelectedFiles() {
         Logger.d("MainActivity", "startDownloadForSelectedFiles started")
-        
+
         if (!ErrorHandler.isStorageAvailable(this, viewModel.getDownloadDir().absolutePath)) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                SecurityException("Storage not available"), this
+                SecurityException("Storage not available"),
+                this
             )
             Logger.w("MainActivity", "Storage not available")
             showSnackbar(errorMessage)
@@ -609,15 +680,18 @@ class MainActivity : AppCompatActivity() {
         }
         if (!ErrorHandler.isNetworkAvailable(this)) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                ConnectException("No network connection"), this
+                ConnectException("No network connection"),
+                this
             )
             Logger.w("MainActivity", "No network connection")
             showSnackbar(errorMessage)
             return
         }
-        val filesToDownload = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded() } ?: emptyList()
+        val filesToDownload = viewModel.currentFiles.value?.filter {
+            viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded()
+        } ?: emptyList()
         Logger.d("MainActivity", "Files to download: ${filesToDownload.size}")
-        
+
         if (filesToDownload.isEmpty()) {
             Logger.i("MainActivity", "All selected files are already downloaded")
             showSnackbar("All selected files are already downloaded.")
@@ -627,7 +701,7 @@ class MainActivity : AppCompatActivity() {
             // Mark download as started
             val adapter = recyclerViewFiles.adapter as? FileAdapter
             adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
-            
+
             // Start each download in parallel using optimized scope
             downloadScope.launch {
                 try {
@@ -647,34 +721,57 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun downloadFile(file: DownloadFile) = withContext(Dispatchers.IO) {
-        if (!ErrorHandler.isStorageAvailable(this@MainActivity, viewModel.getDownloadDir().absolutePath)) {
+        if (!ErrorHandler.isStorageAvailable(
+                this@MainActivity,
+                viewModel.getDownloadDir().absolutePath
+            )
+        ) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                SecurityException("Storage not available"), this@MainActivity
+                SecurityException("Storage not available"),
+                this@MainActivity
             )
             runOnUiThread { showSnackbar(errorMessage) }
             return@withContext
         }
         if (!ErrorHandler.isNetworkAvailable(this@MainActivity)) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                ConnectException("No network connection"), this@MainActivity
+                ConnectException("No network connection"),
+                this@MainActivity
             )
             runOnUiThread { showSnackbar(errorMessage) }
             return@withContext
         }
-        val downloadsDir = FileUtils.getDownloadDir(viewModel.currentStorageDir.value, file.subfolder)
+        val downloadsDir = FileUtils.getDownloadDir(
+            viewModel.currentStorageDir.value,
+            file.subfolder
+        )
         FileUtils.ensureDirExists(downloadsDir)
         val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
-        val outputFile = FileUtils.getLocalFile(viewModel.currentStorageDir.value, fileName, file.subfolder)
+        val outputFile = FileUtils.getLocalFile(
+            viewModel.currentStorageDir.value,
+            fileName,
+            file.subfolder
+        )
         Logger.d("DownloadDebug", "Preparing to download: ${outputFile.absolutePath}")
-        Logger.d("DownloadDebug", "Exists: ${outputFile.exists()}, IsFile: ${outputFile.isFile}, IsDir: ${outputFile.isDirectory}")
+        Logger.d(
+            "DownloadDebug",
+            "Exists: ${outputFile.exists()}, IsFile: ${outputFile.isFile}, " +
+                "IsDir: ${outputFile.isDirectory}"
+        )
         if (outputFile.exists()) {
             FileUtils.safeDelete(outputFile)
         }
         if (outputFile.exists()) {
             runOnUiThread {
-                showSnackbar("Cannot download: File or directory still exists after deletion. Please check storage or restart device.")
+                showSnackbar(
+                    "Cannot download: File or directory still exists after deletion. " +
+                        "Please check storage or restart device."
+                )
             }
-            Logger.e("DownloadDebug", "File still exists after deletion: ${outputFile.absolutePath}")
+            Logger.e(
+                "DownloadDebug",
+                "File still exists after deletion: ${outputFile.absolutePath}"
+            )
             return@withContext
         }
         try {
@@ -684,14 +781,19 @@ class MainActivity : AppCompatActivity() {
                 adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.DOWNLOADING)
                 adapter?.updateDownloadProgress(file.url, 0)
             }
-            
+
             val connection = URL(file.url).openConnection()
             connection.connectTimeout = 15000 // Reduced timeout for faster failure detection
             connection.readTimeout = 30000
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) Advanced Video Downreamer")
+            connection.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Android) Advanced Video Downreamer"
+            )
             val inputStream = connection.getInputStream()
             val outputStream = FileOutputStream(outputFile, false)
-            val buffer = ByteArray(memoryManager.getRecommendedBufferSize(this@MainActivity)) // Memory-aware buffer size
+            val buffer = ByteArray(
+                memoryManager.getRecommendedBufferSize(this@MainActivity)
+            ) // Memory-aware buffer size
             var bytesRead: Int
             var totalBytesRead = 0L
             val contentLength = connection.contentLength
@@ -702,7 +804,7 @@ class MainActivity : AppCompatActivity() {
                     val progress = ((totalBytesRead * 100) / contentLength).toInt()
                     // Update progress in 2% increments for better responsiveness
                     val roundedProgress = (progress / 2) * 2
-                    
+
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
                         // Update progress immediately for better responsiveness
@@ -740,10 +842,12 @@ class MainActivity : AppCompatActivity() {
             Logger.e("DownloadDebug", "Error downloading file: ${e.message}", e)
         }
     }
-    
+
     private fun streamSelectedFiles() {
         // Only use the current selection, do not modify selection state
-        val selectedFileList = viewModel.currentFiles.value?.filter { viewModel.selectedFiles.value?.contains(it.url) == true } ?: emptyList()
+        val selectedFileList = viewModel.currentFiles.value?.filter {
+            viewModel.selectedFiles.value?.contains(it.url) == true
+        } ?: emptyList()
         if (selectedFileList.isNotEmpty()) {
             if (selectedFileList.size == 1) {
                 // Single file - use priority streaming
@@ -795,7 +899,11 @@ class MainActivity : AppCompatActivity() {
                     openDocumentTreeLauncher.launch(null)
                     return
                 }
-                Log.d("StreamDebug", "Streaming SD file: ${localFile.absolutePath}, uri: $contentUri, mimeType: $mimeType")
+                Log.d(
+                    "StreamDebug",
+                    "Streaming SD file: ${localFile.absolutePath}, uri: " +
+                        "$contentUri, mimeType: $mimeType"
+                )
                 intent.setDataAndType(contentUri, mimeType)
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 intent.putExtra(Intent.EXTRA_TITLE, file.name)
@@ -829,7 +937,11 @@ class MainActivity : AppCompatActivity() {
                         "${com.downloadmanager.app.BuildConfig.APPLICATION_ID}.fileprovider",
                         localFile
                     )
-                    Log.d("StreamDebug", "Streaming local file: ${localFile.absolutePath}, uri: $localUri, mimeType: $mimeType")
+                    Log.d(
+                        "StreamDebug",
+                        "Streaming local file: ${localFile.absolutePath}, uri: " +
+                            "$localUri, mimeType: $mimeType"
+                    )
                     intent.setDataAndType(localUri, mimeType)
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     intent.putExtra(Intent.EXTRA_TITLE, file.name)
@@ -896,7 +1008,8 @@ class MainActivity : AppCompatActivity() {
         }
         try {
             val downloadsDir = viewModel.getDownloadDir()
-            val isSdCard = downloadsDir.absolutePath.startsWith("/storage/") && !downloadsDir.absolutePath.startsWith("/storage/emulated/0/")
+            val isSdCard = downloadsDir.absolutePath.startsWith("/storage/") &&
+                !downloadsDir.absolutePath.startsWith("/storage/emulated/0/")
             val playlistUri: Uri? = if (isSdCard) {
                 // Use SAF to create playlist file on SD card
                 if (sdCardUri == null) {
@@ -909,10 +1022,22 @@ class MainActivity : AppCompatActivity() {
                 val playlistName = "playlist_${System.currentTimeMillis()}.m3u"
                 val playlistContent = buildPlaylistContent(files)
                 // Correctly get the parent document URI for the folder
-                val parentDocumentUri = DocumentsContract.buildDocumentUriUsingTree(baseUri, basePath)
-                val docUri = DocumentsContract.createDocument(contentResolver, parentDocumentUri, "audio/x-mpegurl", playlistName)
+                val parentDocumentUri = DocumentsContract.buildDocumentUriUsingTree(
+                    baseUri,
+                    basePath
+                )
+                val docUri = DocumentsContract.createDocument(
+                    contentResolver,
+                    parentDocumentUri,
+                    "audio/x-mpegurl",
+                    playlistName
+                )
                 if (docUri != null) {
-                    contentResolver.openOutputStream(docUri)?.use { it.write(playlistContent.toByteArray()) }
+                    contentResolver.openOutputStream(docUri)?.use {
+                        it.write(
+                            playlistContent.toByteArray()
+                        )
+                    }
                     lastPlaylistUri = docUri // Track for cleanup
                     lastPlaylistFile = null
                     docUri
@@ -1009,7 +1134,7 @@ class MainActivity : AppCompatActivity() {
         }
         return playlistContent.toString()
     }
-    
+
     private fun getMimeType(url: String): String {
         val extension = url.substringAfterLast(".").lowercase()
         return when (extension) {
@@ -1019,11 +1144,13 @@ class MainActivity : AppCompatActivity() {
             else -> "*/*"
         }
     }
-    
+
     private fun loadStorageDir() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val savedPath = prefs.getString(KEY_STORAGE_PATH, null)
-        viewModel.setCurrentStorageDir(if (savedPath != null) File(savedPath) else getDefaultStorageDir())
+        viewModel.setCurrentStorageDir(
+            if (savedPath != null) File(savedPath) else getDefaultStorageDir()
+        )
         com.downloadmanager.app.model.DownloadFile.setDownloadDirectory(viewModel.getDownloadDir())
     }
 
@@ -1049,15 +1176,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
         // Fallback to internal storage public Download/DownloadManager
-        return File(android.os.Environment.getExternalStoragePublicDirectory(
-            android.os.Environment.DIRECTORY_DOWNLOADS), "DownloadManager")
+        return File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS
+            ),
+            "DownloadManager"
+        )
     }
 
     private fun getAvailableStorageDirs(): List<Pair<String, File>> {
         val dirs = mutableListOf<Pair<String, File>>()
         // Internal storage
-        val internal = File(android.os.Environment.getExternalStoragePublicDirectory(
-            android.os.Environment.DIRECTORY_DOWNLOADS), "DownloadManager")
+        val internal = File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS
+            ),
+            "DownloadManager"
+        )
         dirs.add(Pair("Internal Storage", internal))
         // SD card (if available)
         val externalDirs = getExternalFilesDirs(null)
@@ -1082,13 +1217,16 @@ class MainActivity : AppCompatActivity() {
         val totalSpace = dir.totalSpace
         val freeSpaceFormatted = formatFileSize(freeSpace)
         val totalSpaceFormatted = formatFileSize(totalSpace)
-        textViewStorageInfo.text = "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted"
+        textViewStorageInfo.text =
+            "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted"
     }
 
     private fun showStorageSelectionDialog() {
         val dirs = getAvailableStorageDirs()
         val names = dirs.map { it.first }.toTypedArray()
-        val current = dirs.indexOfFirst { it.second.absolutePath == viewModel.getDownloadDir().absolutePath }
+        val current = dirs.indexOfFirst {
+            it.second.absolutePath == viewModel.getDownloadDir().absolutePath
+        }
         android.app.AlertDialog.Builder(this)
             .setTitle("Select Storage Location")
             .setSingleChoiceItems(names, current) { dialog, which ->
@@ -1123,16 +1261,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    
+
     override fun onDestroy() {
         super.onDestroy()
         // Clean up handlers to prevent memory leaks
         progressUpdateHandler.removeCallbacks(progressUpdateRunnable)
         mainHandler.removeCallbacksAndMessages(null)
-        
+
         // Cancel all download coroutines
         downloadScope.cancel()
-        
+
         // Clear caches to free memory
         fileTypeCache.clear()
         fileSizeCache.clear()
@@ -1141,7 +1279,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSnackbar(message: String, long: Boolean = false) {
         val rootView = findViewById<View>(android.R.id.content)
-        Snackbar.make(rootView, message, if (long) Snackbar.LENGTH_LONG else Snackbar.LENGTH_SHORT).show()
+        Snackbar.make(
+            rootView,
+            message,
+            if (long) Snackbar.LENGTH_LONG else Snackbar.LENGTH_SHORT
+        ).show()
     }
 
     private fun isStorageAvailable(): Boolean {
@@ -1202,4 +1344,4 @@ class MainActivity : AppCompatActivity() {
             updateSelectedSizeInfo()
         }
     }
-} 
+}

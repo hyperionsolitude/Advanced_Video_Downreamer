@@ -1,12 +1,14 @@
 package com.downloadmanager.app.model
 
-import android.content.Context
-import java.io.File
 import android.os.Environment
+import java.io.File
 
 object FileUtils {
     fun getDownloadDir(baseDir: File?, subfolder: String? = null): File {
-        val dir = baseDir ?: File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DownloadManager")
+        val dir = baseDir ?: File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "DownloadManager"
+        )
         return if (subfolder.isNullOrEmpty()) dir else File(dir, subfolder)
     }
 
@@ -19,16 +21,21 @@ object FileUtils {
         val file = getLocalFile(baseDir, fileName, subfolder)
         return file.exists() && file.length() > 0
     }
-    
-    fun isFileComplete(baseDir: File?, fileName: String, subfolder: String?, expectedSize: Long? = null): Boolean {
+
+    fun isFileComplete(
+        baseDir: File?,
+        fileName: String,
+        subfolder: String?,
+        expectedSize: Long? = null,
+    ): Boolean {
         val file = getLocalFile(baseDir, fileName, subfolder)
         if (!file.exists() || file.length() == 0L) return false
-        
+
         // If we have expected size, check if file is complete
         if (expectedSize != null && expectedSize > 0) {
             return file.length() >= expectedSize
         }
-        
+
         // For files without expected size, consider them complete if they exist and have content
         return file.length() > 0
     }
@@ -42,7 +49,9 @@ object FileUtils {
         return try {
             if (file.exists()) {
                 if (file.isDirectory) file.deleteRecursively() else file.delete()
-            } else true
+            } else {
+                true
+            }
         } catch (e: Exception) {
             false
         }
@@ -51,4 +60,4 @@ object FileUtils {
     fun ensureDirExists(dir: File): Boolean {
         return if (!dir.exists()) dir.mkdirs() else dir.isDirectory
     }
-} 
+}

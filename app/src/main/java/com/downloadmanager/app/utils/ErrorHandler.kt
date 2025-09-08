@@ -15,7 +15,7 @@ import java.net.UnknownHostException
  * Provides user-friendly error messages and error categorization
  */
 object ErrorHandler {
-    
+
     /**
      * Error categories for better error handling
      */
@@ -24,77 +24,98 @@ object ErrorHandler {
         STORAGE,
         PERMISSION,
         FILE_SYSTEM,
-        UNKNOWN
+        UNKNOWN,
     }
-    
+
     /**
      * Get user-friendly error message based on exception
      */
     fun getUserFriendlyMessage(throwable: Throwable, context: Context): String {
         return when (throwable) {
-            is ConnectException -> context.getString(R.string.error_network_connection)
-            is SocketTimeoutException -> context.getString(R.string.error_network_timeout)
-            is UnknownHostException -> context.getString(R.string.error_network_host)
-            is SecurityException -> context.getString(R.string.error_permission_denied)
-            is java.io.FileNotFoundException -> context.getString(R.string.error_file_not_found)
-            is java.io.IOException -> context.getString(R.string.error_io_exception)
-            else -> context.getString(R.string.error_unknown, throwable.message ?: "Unknown error")
+            is ConnectException ->
+                context.getString(R.string.error_network_connection)
+            is SocketTimeoutException ->
+                context.getString(R.string.error_network_timeout)
+            is UnknownHostException ->
+                context.getString(R.string.error_network_host)
+            is SecurityException ->
+                context.getString(R.string.error_permission_denied)
+            is java.io.FileNotFoundException ->
+                context.getString(R.string.error_file_not_found)
+            is java.io.IOException ->
+                context.getString(R.string.error_io_exception)
+            else ->
+                context.getString(
+                    R.string.error_unknown,
+                    throwable.message ?: "Unknown error"
+                )
         }
     }
-    
+
     /**
      * Get error category for logging and analytics
      */
     fun getErrorCategory(throwable: Throwable): ErrorCategory {
         return when (throwable) {
-            is ConnectException, is SocketTimeoutException, is UnknownHostException -> ErrorCategory.NETWORK
+            is ConnectException,
+            is SocketTimeoutException,
+            is UnknownHostException,
+            ->
+                ErrorCategory.NETWORK
             is SecurityException -> ErrorCategory.PERMISSION
-            is java.io.FileNotFoundException, is java.io.IOException -> ErrorCategory.FILE_SYSTEM
+            is java.io.FileNotFoundException,
+            is java.io.IOException,
+            ->
+                ErrorCategory.FILE_SYSTEM
             else -> ErrorCategory.UNKNOWN
         }
     }
-    
+
     /**
      * Check if error is recoverable
      */
     fun isRecoverableError(throwable: Throwable): Boolean {
         return when (throwable) {
-            is ConnectException, is SocketTimeoutException, is UnknownHostException -> true
+            is ConnectException,
+            is SocketTimeoutException,
+            is UnknownHostException,
+            ->
+                true
             is SecurityException -> false
             is java.io.FileNotFoundException -> false
             is java.io.IOException -> true
             else -> false
         }
     }
-    
+
     /**
      * Get suggested action for error
      */
     fun getSuggestedAction(throwable: Throwable, context: Context): String {
         return when (throwable) {
-            is ConnectException, is SocketTimeoutException, is UnknownHostException -> 
+            is ConnectException, is SocketTimeoutException, is UnknownHostException ->
                 context.getString(R.string.suggestion_check_network)
-            is SecurityException -> 
+            is SecurityException ->
                 context.getString(R.string.suggestion_check_permissions)
-            is java.io.FileNotFoundException -> 
+            is java.io.FileNotFoundException ->
                 context.getString(R.string.suggestion_check_storage)
-            is java.io.IOException -> 
+            is java.io.IOException ->
                 context.getString(R.string.suggestion_retry)
-            else -> 
+            else ->
                 context.getString(R.string.suggestion_contact_support)
         }
     }
-    
+
     /**
      * Check network connectivity
      */
     fun isNetworkAvailable(context: Context): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
-    
+
     /**
      * Check storage availability
      */
@@ -106,7 +127,7 @@ object ErrorHandler {
             false
         }
     }
-    
+
     /**
      * Get available storage space
      */
@@ -118,14 +139,14 @@ object ErrorHandler {
             0L
         }
     }
-    
+
     /**
      * Check if there's enough space for download
      */
     fun hasEnoughSpace(path: String, requiredBytes: Long): Boolean {
         return getAvailableStorageSpace(path) >= requiredBytes
     }
-    
+
     /**
      * Get memory usage percentage (unused parameter for future use)
      */

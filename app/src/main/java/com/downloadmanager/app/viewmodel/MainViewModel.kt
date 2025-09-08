@@ -41,7 +41,9 @@ class MainViewModel : ViewModel() {
     }
 
     fun getDownloadDir(subfolder: String? = null): File {
-        val baseDir = _currentStorageDir.value ?: File("/storage/emulated/0/Download/DownloadManager")
+        val baseDir = _currentStorageDir.value ?: File(
+            "/storage/emulated/0/Download/DownloadManager"
+        )
         return if (subfolder.isNullOrEmpty()) baseDir else File(baseDir, subfolder)
     }
-} 
+}
