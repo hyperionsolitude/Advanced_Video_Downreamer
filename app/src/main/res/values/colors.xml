@@ -26,6 +26,11 @@
     <color name="progress_fill_downloading_light">#4CAF50</color>
     <color name="progress_fill_complete_light">#4CAF50</color>
     
+    <!-- Stable progress bar colors -->
+    <color name="progress_bar_fill">#4CAF50</color>
+    <color name="progress_bar_background">#2D2D2D</color>
+    <color name="progress_bar_error">#F44336</color>
+    
     <!-- Text Colors for Dark Theme -->
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#B3FFFFFF</color>

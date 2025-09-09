@@ -96,18 +96,14 @@ private fun bindProgress(
         holder.progressBar.visibility = View.VISIBLE
         holder.progressBar.progress = progress
         val itemContext = holder.itemView.context
-        if (progress == -1) {
-            holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
-                ContextCompat.getColor(
-                    itemContext,
-                    com.downloadmanager.app.R.color.progress_fill_error
-                )
-            )
+        val colorRes = if (progress == FileAdapter.PROGRESS_ERROR_VALUE) {
+            R.color.progress_bar_error
         } else {
-            holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
-                ContextCompat.getColor(itemContext, com.downloadmanager.app.R.color.progress_fill)
-            )
+            R.color.progress_bar_fill
         }
+        holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+            ContextCompat.getColor(itemContext, colorRes)
+        )
     } else {
         holder.progressBar.visibility = View.GONE
     }
@@ -166,6 +162,7 @@ class FileAdapter(
         private const val PERCENT_MIN = 0
         private const val PERCENT_MAX = 100
         private const val UPDATE_THROTTLE_MS = 100L
+        const val PROGRESS_ERROR_VALUE = -1
 
         override fun areItemsTheSame(oldItem: DownloadFile, newItem: DownloadFile): Boolean {
             return oldItem.url == newItem.url
@@ -308,14 +305,77 @@ class FileAdapter(
         downloadProgress[url] = progress
 
         if (currentTime - lastUpdate > progressUpdateThrottle) {
-            val index = currentList.indexOfFirst { it.url == url }
-            if (index != -1) {
-                notifyItemChanged(index)
-                lastProgressUpdate[url] = currentTime
-            }
+            updateProgressBarOnly(url, progress)
+            lastProgressUpdate[url] = currentTime
         } else {
             progressUpdatePending.add(url)
         }
+    }
+
+    private fun updateProgressBarOnly(url: String, progress: Int) {
+        recyclerView?.let { rv ->
+            updateProgressBarForVisibleItems(rv, url, progress)
+        }
+    }
+
+    private fun updateProgressBarForVisibleItems(
+        recyclerView: androidx.recyclerview.widget.RecyclerView,
+        url: String,
+        progress: Int,
+    ) {
+        val layoutManager = recyclerView.layoutManager
+        if (layoutManager is androidx.recyclerview.widget.LinearLayoutManager) {
+            val firstVisible = layoutManager.findFirstVisibleItemPosition()
+            val lastVisible = layoutManager.findLastVisibleItemPosition()
+            if (firstVisible != -1 && lastVisible != -1) {
+                findAndUpdateProgressBar(recyclerView, url, progress, firstVisible, lastVisible)
+            }
+        }
+    }
+
+    private fun findAndUpdateProgressBar(
+        recyclerView: androidx.recyclerview.widget.RecyclerView,
+        url: String,
+        progress: Int,
+        firstVisible: Int,
+        lastVisible: Int,
+    ) {
+        for (i in firstVisible..lastVisible) {
+            val file = getItem(i)
+            if (file.url == url) {
+                val holder = recyclerView.findViewHolderForAdapterPosition(i) as? FileViewHolder
+                holder?.let { viewHolder ->
+                    updateProgressBarDirectly(viewHolder, progress)
+                }
+                break
+            }
+        }
+    }
+
+    private fun updateProgressBarDirectly(holder: FileViewHolder, progress: Int) {
+        if (progress in PERCENT_MIN..PERCENT_MAX) {
+            showProgressBar(holder, progress)
+        } else {
+            hideProgressBar(holder)
+        }
+    }
+
+    private fun showProgressBar(holder: FileViewHolder, progress: Int) {
+        holder.progressBar.visibility = View.VISIBLE
+        holder.progressBar.progress = progress
+        val itemContext = holder.itemView.context
+        val colorRes = if (progress == PROGRESS_ERROR_VALUE) {
+            R.color.progress_bar_error
+        } else {
+            R.color.progress_bar_fill
+        }
+        holder.progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+            ContextCompat.getColor(itemContext, colorRes)
+        )
+    }
+
+    private fun hideProgressBar(holder: FileViewHolder) {
+        holder.progressBar.visibility = View.GONE
     }
 
     fun setDownloadStatus(url: String, status: DownloadStatus) {
@@ -333,10 +393,8 @@ class FileAdapter(
 
     fun flushProgressUpdates() {
         progressUpdatePending.forEach { url ->
-            val index = currentList.indexOfFirst { it.url == url }
-            if (index != -1) {
-                notifyItemChanged(index)
-            }
+            val progress = downloadProgress[url] ?: 0
+            updateProgressBarOnly(url, progress)
         }
         progressUpdatePending.clear()
     }
