@@ -14,10 +14,10 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 
 private fun setupSelectionUi(
     holder: FileAdapter.FileViewHolder,
-    selectedFiles: Set<String>,
+    getSelectedFiles: () -> Set<String>,
     file: DownloadFile,
 ) {
-    holder.itemView.isSelected = selectedFiles.contains(file.url)
+    holder.itemView.isSelected = getSelectedFiles().contains(file.url)
 }
 
 private fun bindFileTexts(holder: FileAdapter.FileViewHolder, file: DownloadFile) {
@@ -44,18 +44,20 @@ private fun bindFileTexts(holder: FileAdapter.FileViewHolder, file: DownloadFile
 
 private fun setupCheckbox(
     holder: FileAdapter.FileViewHolder,
-    selectedFiles: MutableSet<String>,
+    getSelectedFiles: () -> Set<String>,
     file: DownloadFile,
     onFileSelected: (DownloadFile, Boolean) -> Unit,
 ) {
-    holder.checkBox.isChecked = selectedFiles.contains(file.url)
+    val isSelected = getSelectedFiles().contains(file.url)
+
+    // Temporarily disable the listener to prevent cascade effects during rebinding
     holder.checkBox.setOnCheckedChangeListener(null)
+    holder.checkBox.isChecked = isSelected
+    android.util.Log.d("FileAdapter", "Setting checkbox for ${file.name}: $isSelected")
+
+    // Set the listener after setting the checked state
     holder.checkBox.setOnCheckedChangeListener { _, isChecked ->
-        if (isChecked) {
-            selectedFiles.add(file.url)
-        } else {
-            selectedFiles.remove(file.url)
-        }
+        android.util.Log.d("FileAdapter", "Checkbox changed for ${file.name}: $isChecked")
         // Defer the UI update to avoid RecyclerView layout conflicts
         holder.itemView.post {
             onFileSelected(file, isChecked)
@@ -63,12 +65,20 @@ private fun setupCheckbox(
     }
 }
 
-private fun setupItemClick(holder: FileAdapter.FileViewHolder) {
+private fun setupItemClick(
+    holder: FileAdapter.FileViewHolder,
+    file: DownloadFile,
+    getSelectedFiles: () -> Set<String>,
+    onFileSelected: (DownloadFile, Boolean) -> Unit,
+) {
     holder.itemView.setOnClickListener {
-        // Defer the checkbox toggle to avoid RecyclerView layout conflicts
-        holder.itemView.post {
-            holder.checkBox.isChecked = !holder.checkBox.isChecked
-        }
+        val currentState = getSelectedFiles().contains(file.url)
+        val newState = !currentState
+        android.util.Log.d(
+            "FileAdapter",
+            "Item clicked: ${file.name}, currentState: $currentState, newState: $newState"
+        )
+        onFileSelected(file, newState)
     }
 }
 
@@ -144,6 +154,7 @@ private fun bindStatus(
 
 class FileAdapter(
     private val onFileSelected: (DownloadFile, Boolean) -> Unit,
+    private val getSelectedFiles: () -> Set<String>,
 ) : ListAdapter<DownloadFile, FileAdapter.FileViewHolder>(DiffCallback) {
 
     companion object DiffCallback : DiffUtil.ItemCallback<DownloadFile>() {
@@ -159,7 +170,6 @@ class FileAdapter(
             return oldItem == newItem
         }
     }
-    private val selectedFiles = mutableSetOf<String>()
     private val downloadProgress = mutableMapOf<String, Int>() // url -> progress
     private val lastProgressUpdate = mutableMapOf<String, Long>() // url -> timestamp
 
@@ -199,10 +209,10 @@ class FileAdapter(
 
     override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
         val file = getItem(position)
-        setupSelectionUi(holder, selectedFiles, file)
+        setupSelectionUi(holder, getSelectedFiles, file)
         bindFileTexts(holder, file)
-        setupCheckbox(holder, selectedFiles, file, onFileSelected)
-        setupItemClick(holder)
+        setupCheckbox(holder, getSelectedFiles, file, onFileSelected)
+        setupItemClick(holder, file, getSelectedFiles, onFileSelected)
         bindProgress(holder, file, downloadProgress, PERCENT_MIN, PERCENT_MAX)
         bindStatus(holder, file, downloadStatus)
     }
@@ -211,22 +221,13 @@ class FileAdapter(
         submitList(newFiles)
     }
 
-    fun selectAll() {
-        selectedFiles.clear()
-        currentList.forEach { selectedFiles.add(it.url) }
-        notifyDataSetChanged()
-    }
-
-    fun clearSelection() {
-        selectedFiles.clear()
+    fun clearProgressAndStatus() {
         downloadProgress.clear()
         downloadStatus.clear()
         lastProgressUpdate.clear()
         progressUpdatePending.clear()
         notifyDataSetChanged()
     }
-
-    fun getSelectedFiles(): Set<String> = selectedFiles.toSet()
 
     fun updateDownloadProgress(url: String, progress: Int) {
         val currentTime = System.currentTimeMillis()

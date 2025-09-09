@@ -22,7 +22,7 @@ class PlaybackController(
         }
         activity.viewModel.clearSelection()
         val adapter = activity.recyclerViewFiles.adapter as? FileAdapter
-        adapter?.clearSelection()
+        adapter?.clearProgressAndStatus()
         activity.textViewSelectedCount.text = "Selected: 0"
         activity.updateActionButtons()
         activity.updateSelectedSizeInfo()

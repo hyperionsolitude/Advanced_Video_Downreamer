@@ -257,9 +257,12 @@ class MainActivity : AppCompatActivity() {
 
         // Setup RecyclerView
         recyclerViewFiles.layoutManager = LinearLayoutManager(this)
-        val adapter = FileAdapter { file, isSelected ->
-            handleFileSelection(file, isSelected)
-        }
+        val adapter = FileAdapter(
+            onFileSelected = { file, isSelected ->
+                handleFileSelection(file, isSelected)
+            },
+            getSelectedFiles = { viewModel.selectedFiles.value ?: emptySet() }
+        )
         recyclerViewFiles.adapter = adapter
         // No longer needed; adapter updates via notifyItemChanged
 

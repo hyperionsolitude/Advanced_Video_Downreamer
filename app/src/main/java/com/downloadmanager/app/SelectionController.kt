@@ -15,11 +15,17 @@ class SelectionController(
 
     fun handleFileSelection(file: DownloadFile, isSelected: Boolean) {
         val selected = main.viewModel.selectedFiles.value?.toMutableSet() ?: mutableSetOf()
+        android.util.Log.d(
+            "SelectionController",
+            "handleFileSelection: ${file.name}, isSelected: $isSelected, " +
+                "current selected: ${selected.size}"
+        )
         if (isSelected) {
             selected.add(file.url)
         } else {
             selected.remove(file.url)
         }
+        android.util.Log.d("SelectionController", "After update: selected count: ${selected.size}")
         main.viewModel.setSelectedFiles(selected)
         updateButtonsAndSize()
     }
@@ -53,10 +59,23 @@ class SelectionController(
 
     fun updateActionButtons() {
         val selected = main.viewModel.selectedFiles.value?.size ?: 0
+        android.util.Log.d("SelectionController", "updateActionButtons: selected count: $selected")
         main.buttonDownload.isEnabled = selected > 0
         main.buttonStream.isEnabled = selected > 0
         main.textViewSelectedCount.text = "Selected: $selected"
-        (main.recyclerViewFiles.adapter as? FileAdapter)?.notifyDataSetChanged()
+
+        // Instead of notifyDataSetChanged(), update only the visible items
+        val adapter = main.recyclerViewFiles.adapter as? FileAdapter
+        val layoutManager = main.recyclerViewFiles.layoutManager
+        if (layoutManager is androidx.recyclerview.widget.LinearLayoutManager) {
+            val firstVisible = layoutManager.findFirstVisibleItemPosition()
+            val lastVisible = layoutManager.findLastVisibleItemPosition()
+            if (firstVisible != -1 && lastVisible != -1) {
+                for (i in firstVisible..lastVisible) {
+                    adapter?.notifyItemChanged(i)
+                }
+            }
+        }
     }
 
     fun updateSelectedSizeInfo() {
