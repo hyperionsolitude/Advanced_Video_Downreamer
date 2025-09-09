@@ -82,4 +82,34 @@ object FileUtils {
             ?: File(context.filesDir, "downloads")
         return if (subfolder.isNullOrEmpty()) base else File(base, subfolder)
     }
+
+    /**
+     * Check if a file is partially downloaded (exists but not complete)
+     */
+    fun isFilePartiallyDownloaded(
+        baseDir: File?,
+        fileName: String,
+        subfolder: String?,
+        expectedSize: Long? = null,
+    ): Boolean {
+        val file = getLocalFile(baseDir, fileName, subfolder)
+        val existsAndNotEmpty = file.exists() && file.length() > ZERO_LONG
+        val actualSize = file.length()
+        val hasExpected = expectedSize != null
+        val expected = expectedSize ?: 0L
+        // Single-return: partial if exists, has expected size, and is smaller than expected
+        return existsAndNotEmpty && hasExpected && actualSize < expected
+    }
+
+    /**
+     * Get the current size of a partially downloaded file
+     */
+    fun getPartialFileSize(
+        baseDir: File?,
+        fileName: String,
+        subfolder: String?,
+    ): Long {
+        val file = getLocalFile(baseDir, fileName, subfolder)
+        return if (file.exists()) file.length() else 0L
+    }
 }

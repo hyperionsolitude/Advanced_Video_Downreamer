@@ -85,4 +85,5 @@ detekt {
     buildUponDefaultConfig = true
     allRules = false
     autoCorrect = true
+    ignoreFailures = false
 }

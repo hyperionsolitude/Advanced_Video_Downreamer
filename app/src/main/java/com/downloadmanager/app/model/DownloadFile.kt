@@ -81,6 +81,30 @@ data class DownloadFile(
         return FileUtils.getLocalFile(downloadDir, fileName, subfolder).absolutePath
     }
 
+    /**
+     * Check if this file is partially downloaded (exists but not complete)
+     */
+    fun isPartiallyDownloaded(): Boolean {
+        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val expectedSize = parseFileSizeToBytes()
+        return FileUtils.isFilePartiallyDownloaded(downloadDir, fileName, subfolder, expectedSize)
+    }
+
+    /**
+     * Get the current size of the partially downloaded file
+     */
+    fun getPartialDownloadSize(): Long {
+        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        return FileUtils.getPartialFileSize(downloadDir, fileName, subfolder)
+    }
+
+    /**
+     * Get the expected total size of the file
+     */
+    fun getExpectedSize(): Long? {
+        return parseFileSizeToBytes()
+    }
+
     companion object CREATOR : Parcelable.Creator<DownloadFile> {
         private const val BYTES_IN_KILOBYTE = 1024.0
         private const val BYTES_IN_MEGABYTE = BYTES_IN_KILOBYTE * 1024.0

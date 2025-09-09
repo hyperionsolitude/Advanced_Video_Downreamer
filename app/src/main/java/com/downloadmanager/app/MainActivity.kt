@@ -26,6 +26,11 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.downloadmanager.app.adapter.FileAdapter
 import com.downloadmanager.app.databinding.ActivityMainBinding
+import com.downloadmanager.app.helpers.DownloadFileHandler
+import com.downloadmanager.app.helpers.DownloadRunner
+import com.downloadmanager.app.helpers.DownloadRunnerConfig
+import com.downloadmanager.app.helpers.FileStateRefresher
+import com.downloadmanager.app.model.DownloadCheckpoint
 import com.downloadmanager.app.model.DownloadFile
 import com.downloadmanager.app.model.FileUtils
 import com.downloadmanager.app.utils.ErrorHandler
@@ -45,10 +50,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
-
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-        private const val READ_TIMEOUT_MS = 30_000
+        private const val CHECKPOINT_SAVE_INTERVAL_PERCENT = 10
         private const val USER_AGENT = "Mozilla/5.0 (Android) Advanced Video Downreamer"
         private const val CONNECT_TIMEOUT_SHORT_MS = 3_000
         private const val READ_TIMEOUT_SHORT_MS = 3_000
@@ -58,11 +61,7 @@ class MainActivity : AppCompatActivity() {
         private const val DEFAULT_PERMISSION_REQUEST_CODE = 123
         private const val DEFAULT_PROGRESS_UPDATE_INTERVAL_MS = 200L
         private const val JSOUP_TIMEOUT_MS = 8_000
-        private const val PERCENT_0 = 0
-        private const val PERCENT_2 = 2
         private const val PERCENT_100 = 100
-        private const val RETRY_DELAY_MS = 2000L
-        private const val MAX_RETRIES = 3
     }
 
     private lateinit var editTextUrl: EditText
@@ -113,6 +112,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     internal var sdCardUri: Uri? = null
 
+    // Helper classes
+    private lateinit var downloadFileHandler: DownloadFileHandler
+    private lateinit var downloadRunner: DownloadRunner
+    private lateinit var fileStateRefresher: FileStateRefresher
+
     // Delegates
     private val fileFetcher = FileFetcher(
         userAgent = USER_AGENT,
@@ -139,6 +143,14 @@ class MainActivity : AppCompatActivity() {
     // Performance optimization: Coroutine scope for downloads
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // Track download checkpoints for resume functionality
+    private val downloadCheckpoints = mutableMapOf<String, DownloadCheckpoint>()
+
+    // Track active downloads
+    private val activeDownloads = mutableSetOf<String>()
+
+    // Key moved to CheckpointStorage
+
     // Performance optimization: Memory-aware caches
     private val fileTypeCache = MemoryManager.MemoryAwareCache<String, String>()
     private val fileSizeCache = MemoryManager.MemoryAwareCache<String, String>()
@@ -153,7 +165,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Logger.d("MainActivity", "onCreate started")
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -173,11 +184,38 @@ class MainActivity : AppCompatActivity() {
         loadStorageDir()
         updateStorageInfo()
 
-        Logger.d("MainActivity", "onCreate completed")
+        // Initialize helper classes
+        downloadFileHandler = DownloadFileHandler(
+            context = this,
+            viewModel = viewModel,
+            downloadCheckpoints = downloadCheckpoints,
+            updateProgress = { fileUrl, progress -> updateProgress(fileUrl, progress) },
+            finalizeDownload = { file -> finalizeDownload(file) }
+        )
+        downloadRunner = DownloadRunner(
+            DownloadRunnerConfig(
+                context = this,
+                downloadScope = downloadScope,
+                downloadCheckpoints = downloadCheckpoints,
+                activeDownloads = activeDownloads,
+                saveCheckpoints = { saveDownloadCheckpoints() },
+                downloadFileHandler = downloadFileHandler,
+                showSnackbar = { message -> showSnackbar(message) }
+            )
+        )
+        fileStateRefresher = FileStateRefresher(viewModel, downloadCheckpoints, activeDownloads)
+
+        // Restore download checkpoints and active downloads from previous session
+        restoreDownloadCheckpoints()
+        restoreActiveDownloads()
     }
 
     override fun onResume() {
         super.onResume()
+        Logger.d(
+            "MainActivity",
+            "onResume: current files count = ${viewModel.currentFiles.value?.size ?: 0}"
+        )
 
         // Memory management: Clear caches if low memory
         if (memoryManager.shouldClearCache(this)) {
@@ -186,7 +224,7 @@ class MainActivity : AppCompatActivity() {
             Logger.d("MemoryManager", "Cleared caches due to low memory")
         }
 
-        // Delete any zero-length files and partial downloads for all current files
+        // Only delete zero-length files, but preserve partial downloads for resume
         for (file in viewModel.currentFiles.value ?: emptyList()) {
             val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
             FileUtils.deleteFileIfZeroLength(
@@ -194,24 +232,53 @@ class MainActivity : AppCompatActivity() {
                 fileName,
                 file.subfolder
             )
-            // Also clean up partial downloads (files that exist but are not complete)
-            if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
-                val localFile = FileUtils.getLocalFile(
-                    viewModel.currentStorageDir.value,
-                    fileName,
-                    file.subfolder
-                )
-                if (localFile.exists()) {
-                    FileUtils.safeDelete(localFile)
-                }
-            }
+            // Don't delete partial downloads - we want to resume them!
         }
+
+        // Refresh file states when returning from background
+        refreshFileStates()
         // Clean up last playlist file if it exists
         cleanupLastPlaylist()
-        val adapter = recyclerViewFiles.adapter as? FileAdapter
-        adapter?.updateFiles(viewModel.currentFiles.value ?: emptyList())
         updateActionButtons()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Downloads will continue in background
         updateSelectedSizeInfo()
+    }
+
+    private fun refreshFileStates() {
+        val adapter = recyclerViewFiles.adapter as? FileAdapter
+        fileStateRefresher.refreshFileStates(adapter)
+    }
+
+    private fun saveDownloadCheckpoints() {
+        com.downloadmanager.app.storage.CheckpointStorage.saveCheckpoints(
+            prefs,
+            downloadCheckpoints
+        )
+        // Also save active downloads
+        saveActiveDownloads()
+    }
+
+    private fun saveActiveDownloads() {
+        val activeDownloadsJson = activeDownloads.joinToString(",")
+        prefs.edit().putString("active_downloads", activeDownloadsJson).apply()
+    }
+
+    private fun restoreActiveDownloads() {
+        val activeDownloadsJson = prefs.getString("active_downloads", "") ?: ""
+        activeDownloads.clear()
+        if (activeDownloadsJson.isNotEmpty()) {
+            activeDownloads.addAll(activeDownloadsJson.split(",").filter { it.isNotEmpty() })
+        }
+    }
+
+    private fun restoreDownloadCheckpoints() {
+        val restored = com.downloadmanager.app.storage.CheckpointStorage.restoreCheckpoints(prefs)
+        downloadCheckpoints.clear()
+        downloadCheckpoints.putAll(restored)
     }
 
     private fun cleanupLastPlaylist() {
@@ -585,27 +652,6 @@ class MainActivity : AppCompatActivity() {
         return hasStorage && hasNetwork
     }
 
-    private suspend fun validateDownloadPreconditions(): Boolean {
-        val hasStorage = ErrorHandler.isStorageAvailable(viewModel.getDownloadDir().absolutePath)
-        val hasNetwork = ErrorHandler.isNetworkAvailable(this@MainActivity)
-
-        if (!hasStorage) {
-            val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                SecurityException("Storage not available"),
-                this@MainActivity
-            )
-            runOnUiThread { showSnackbar(errorMessage) }
-        } else if (!hasNetwork) {
-            val errorMessage = ErrorHandler.getUserFriendlyMessage(
-                ConnectException("No network connection"),
-                this@MainActivity
-            )
-            runOnUiThread { showSnackbar(errorMessage) }
-        }
-
-        return hasStorage && hasNetwork
-    }
-
     private fun filesPendingDownload(): List<DownloadFile> {
         return viewModel.currentFiles.value?.filter {
             viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded()
@@ -614,51 +660,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchDownload(file: DownloadFile) {
         val adapter = recyclerViewFiles.adapter as? FileAdapter
-        adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
-        downloadScope.launch {
-            try {
-                downloadFile(file)
-            } catch (e: SecurityException) {
-                Logger.e(
-                    "MainActivity",
-                    "Security error downloading ${file.name}: ${e.message}",
-                    e
-                )
-                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
-                withContext(Dispatchers.Main) {
-                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                    adapter?.updateProgressOnly(file.url, PERCENT_100)
-                    adapter?.flushProgressUpdates()
-                    showSnackbar("Error downloading ${file.name}: $errorMessage")
-                }
-            } catch (e: java.io.IOException) {
-                Logger.e(
-                    "MainActivity",
-                    "IO error downloading ${file.name}: ${e.message}",
-                    e
-                )
-                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
-                withContext(Dispatchers.Main) {
-                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                    adapter?.updateProgressOnly(file.url, PERCENT_100)
-                    adapter?.flushProgressUpdates()
-                    showSnackbar("Error downloading ${file.name}: $errorMessage")
-                }
-            } catch (e: IllegalArgumentException) {
-                Logger.e(
-                    "MainActivity",
-                    "Invalid argument downloading ${file.name}: ${e.message}",
-                    e
-                )
-                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
-                withContext(Dispatchers.Main) {
-                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                    adapter?.updateProgressOnly(file.url, PERCENT_100)
-                    adapter?.flushProgressUpdates()
-                    showSnackbar("Error downloading ${file.name}: $errorMessage")
-                }
-            }
-        }
+        activeDownloads.add(file.url)
+        downloadRunner.launchDownload(file, adapter)
     }
 
     internal fun startDownloadForSelectedFiles() {
@@ -678,42 +681,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun prepareOutputFile(file: DownloadFile): java.io.File? {
-        val downloadsDir = FileUtils.getDownloadDir(
-            viewModel.currentStorageDir.value,
-            file.subfolder
-        )
-        FileUtils.ensureDirExists(downloadsDir)
-        val rawName = file.name.ifEmpty { file.url.substringAfterLast("/") }
-        val fileName = FileUtils.sanitizeFileName(rawName)
-        val outputFile = FileUtils.getLocalFile(
-            viewModel.currentStorageDir.value,
-            fileName,
-            file.subfolder
-        )
-        Logger.d("DownloadDebug", "Preparing to download: ${outputFile.absolutePath}")
-        Logger.d(
-            "DownloadDebug",
-            "Exists: ${outputFile.exists()}, IsFile: ${outputFile.isFile}, " +
-                "IsDir: ${outputFile.isDirectory}"
-        )
-        if (outputFile.exists()) {
-            FileUtils.safeDelete(outputFile)
-        }
-        return if (outputFile.exists()) null else outputFile
-    }
-
-    private fun openConnection(urlStr: String): java.net.URLConnection {
-        val connection = java.net.URL(urlStr).openConnection()
-        connection.connectTimeout = CONNECT_TIMEOUT_MS
-        connection.readTimeout = READ_TIMEOUT_MS
-        connection.setRequestProperty("User-Agent", USER_AGENT)
-        connection.setRequestProperty("Connection", "close") // Use close instead of keep-alive
-        connection.setRequestProperty("Accept-Encoding", "identity")
-        connection.setRequestProperty("Range", "bytes=0-") // Support range requests
-        return connection
-    }
-
     private fun updateProgress(fileUrl: String, roundedProgress: Int) {
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastProgressUpdate > progressUpdateInterval) {
@@ -725,6 +692,24 @@ class MainActivity : AppCompatActivity() {
         } else {
             progressUpdateQueue[fileUrl] = roundedProgress
         }
+
+        // Update checkpoint with current progress
+        updateCheckpoint(fileUrl, roundedProgress)
+    }
+
+    private fun updateCheckpoint(fileUrl: String, progress: Int) {
+        val checkpoint = downloadCheckpoints[fileUrl] ?: return
+        val totalBytes = checkpoint.totalBytes
+        if (totalBytes > 0) {
+            val downloadedBytes = (totalBytes * progress / PERCENT_100).toLong()
+            val updatedCheckpoint = checkpoint.copy(downloadedBytes = downloadedBytes)
+            downloadCheckpoints[fileUrl] = updatedCheckpoint
+
+            // Save checkpoints periodically (every 10% progress)
+            if (progress % CHECKPOINT_SAVE_INTERVAL_PERCENT == 0) {
+                saveDownloadCheckpoints()
+            }
+        }
     }
 
     private fun finalizeDownload(file: DownloadFile) {
@@ -733,104 +718,17 @@ class MainActivity : AppCompatActivity() {
             adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.COMPLETE)
             adapter?.updateProgressOnly(file.url, PERCENT_100)
             adapter?.flushProgressUpdates()
+
+            // Remove from active downloads and checkpoints when download completes
+            activeDownloads.remove(file.url)
+            downloadCheckpoints.remove(file.url)
+            saveDownloadCheckpoints()
+
             showSnackbar("Downloaded: ${file.name}")
         }
     }
 
-    private val downloadController = DownloadController(
-        bufferSizeProvider = { memoryManager.getRecommendedBufferSize(this@MainActivity) }
-    )
-
     @Suppress("LongMethod")
-    private suspend fun downloadFile(file: DownloadFile) = withContext(Dispatchers.IO) {
-        if (!validateDownloadPreconditions()) return@withContext
-
-        val outputFile = prepareOutputFile(file)
-        if (outputFile == null) {
-            runOnUiThread {
-                showSnackbar(
-                    "Cannot download: File or directory still exists after deletion. " +
-                        "Please check storage or restart device."
-                )
-            }
-            Logger.e(
-                "DownloadDebug",
-                "File still exists after deletion for ${file.url}"
-            )
-            return@withContext
-        }
-
-        try {
-            runOnUiThread {
-                val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.DOWNLOADING)
-                adapter?.updateDownloadProgress(file.url, PERCENT_0)
-            }
-
-            Logger.d("DownloadDebug", "Starting download to: ${outputFile.absolutePath}")
-
-            // Try download with retry logic
-            var retryCount = 0
-            val maxRetries = MAX_RETRIES
-            var success = false
-
-            while (retryCount < maxRetries && !success) {
-                try {
-                    val connection = openConnection(file.url)
-                    downloadController.performDownload(
-                        connection = connection,
-                        outputFile = outputFile,
-                        onProgress = { progress ->
-                            val rounded = (progress / PERCENT_2) * PERCENT_2
-                            updateProgress(file.url, rounded)
-                        }
-                    )
-                    success = true
-                    Logger.d(
-                        "DownloadDebug",
-                        "Download completed successfully on attempt ${retryCount + 1}"
-                    )
-                } catch (e: java.io.IOException) {
-                    retryCount++
-                    Logger.w("DownloadDebug", "Download attempt $retryCount failed: ${e.message}")
-                    if (retryCount < maxRetries) {
-                        Logger.d("DownloadDebug", "Retrying download in 2 seconds...")
-                        kotlinx.coroutines.delay(RETRY_DELAY_MS) // Wait 2 seconds before retry
-                    } else {
-                        throw e
-                    }
-                }
-            }
-
-            val completedMsg = "Download completed. Exists=${outputFile.exists()} " +
-                "Size=${outputFile.length()}"
-            Logger.d("DownloadDebug", completedMsg)
-            finalizeDownload(file)
-        } catch (e: java.io.IOException) {
-            runOnUiThread {
-                val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                adapter?.updateProgressOnly(file.url, PERCENT_100)
-                adapter?.flushProgressUpdates()
-                showSnackbar("I/O error downloading ${file.name}: ${e.message}")
-            }
-            Logger.e(
-                "DownloadDebug",
-                "Error downloading file: ${e.message}",
-                e
-            )
-        } catch (e: SecurityException) {
-            runOnUiThread {
-                val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                adapter?.updateProgressOnly(file.url, PERCENT_100)
-                adapter?.flushProgressUpdates()
-                showSnackbar("Security error downloading ${file.name}: ${e.message}")
-            }
-            Logger.e("DownloadDebug", "Security error downloading file: ${e.message}", e)
-        }
-    }
-
     private val playbackController by lazy { PlaybackController(this) }
     internal fun streamSelectedFiles() { playbackController.streamSelectedFiles() }
 
@@ -930,8 +828,14 @@ class MainActivity : AppCompatActivity() {
         progressUpdateHandler.removeCallbacks(progressUpdateRunnable)
         mainHandler.removeCallbacksAndMessages(null)
 
-        // Cancel all download coroutines
-        downloadScope.cancel()
+        // Save download checkpoints before cancelling
+        saveDownloadCheckpoints()
+
+        // Don't cancel downloads on destroy - let them continue in background
+        // Only cancel if the app is being completely terminated
+        if (isFinishing) {
+            downloadScope.cancel()
+        }
 
         // Clear caches to free memory
         fileTypeCache.clear()
@@ -979,6 +883,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeViewModel() {
         viewModel.currentFiles.observe(this) { files ->
+            Logger.d("MainActivity", "observeViewModel: files count = ${files.size}")
             val adapter = recyclerViewFiles.adapter as? FileAdapter
             adapter?.updateFiles(files)
             textViewFileCount.text = "Files: ${files.size}"

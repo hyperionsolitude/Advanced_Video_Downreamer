@@ -16,20 +16,34 @@ class DownloadController(
         outputFile: java.io.File,
         onProgress: (Int) -> Unit,
     ) {
+        performDownload(connection, outputFile, onProgress, 0L)
+    }
+
+    fun performDownload(
+        connection: URLConnection,
+        outputFile: java.io.File,
+        onProgress: (Int) -> Unit,
+        startByte: Long,
+    ) {
         val inputStream = connection.getInputStream()
-        val outputStream = java.io.FileOutputStream(outputFile, false)
+        val outputStream = java.io.FileOutputStream(outputFile, startByte > 0)
         val buffer = ByteArray(bufferSizeProvider())
         var bytesRead: Int
-        var totalBytesRead = 0L
+        var totalBytesRead = startByte
         val contentLength = connection.contentLength
-        android.util.Log.d("DownloadDebug", "Content length: $contentLength")
+        val totalSize = if (contentLength > 0) contentLength + startByte else -1L
+
+        android.util.Log.d(
+            "DownloadDebug",
+            "Content length: $contentLength, Start byte: $startByte, Total size: $totalSize"
+        )
 
         try {
             while (inputStream.read(buffer).also { bytesRead = it } != -1) {
                 outputStream.write(buffer, 0, bytesRead)
                 totalBytesRead += bytesRead
-                if (contentLength > 0) {
-                    val progress = ((totalBytesRead * PERCENT_100) / contentLength).toInt()
+                if (totalSize > 0) {
+                    val progress = ((totalBytesRead * PERCENT_100) / totalSize).toInt()
                     onProgress(progress)
                 }
                 // Flush periodically to ensure data is written
@@ -40,11 +54,13 @@ class DownloadController(
             outputStream.flush() // Final flush
             android.util.Log.d(
                 "DownloadDebug",
-                "Download completed successfully. Total bytes read: $totalBytesRead"
+                "Download completed successfully. Total bytes read: $totalBytesRead " +
+                    "(resumed from: $startByte)"
             )
         } catch (e: java.io.IOException) {
             // handle IO error
             android.util.Log.e("DownloadDebug", "Download failed: ${e.message}")
+            throw e // Re-throw to allow retry logic
         } finally {
             inputStream.use { it.close() }
             outputStream.use { it.close() }

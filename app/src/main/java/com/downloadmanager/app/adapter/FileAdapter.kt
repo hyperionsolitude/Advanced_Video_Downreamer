@@ -25,22 +25,41 @@ private fun setupSelectionUi(
     val unused = holder to getSelectedFiles to file
 }
 
-private fun bindFileTexts(holder: FileAdapter.FileViewHolder, file: DownloadFile) {
-    val statusText = if (file.isCompletelyDownloaded()) {
-        "\uD83D\uDCC1 LOCAL"
-    } else {
-        "\uD83C\uDF10 NETWORK"
+private fun bindFileTexts(
+    holder: FileAdapter.FileViewHolder,
+    file: DownloadFile,
+    downloadStatus: Map<String, FileAdapter.DownloadStatus>,
+) {
+    val status = downloadStatus[file.url] ?: FileAdapter.DownloadStatus.PENDING
+    val statusText = when {
+        file.isCompletelyDownloaded() -> "\uD83D\uDCC1 LOCAL"
+        status == FileAdapter.DownloadStatus.DOWNLOADING -> "\uD83D\uDCCE DOWNLOADING"
+        file.isPartiallyDownloaded() -> "\uD83D\uDCC4 PAUSED"
+        else -> "\uD83C\uDF10 NETWORK"
     }
     holder.textViewName.text = "$statusText - ${file.name}"
     val itemContext = holder.itemView.context
-    if (file.isCompletelyDownloaded()) {
-        holder.textViewName.setTextColor(
-            ContextCompat.getColor(itemContext, R.color.status_local)
-        )
-    } else {
-        holder.textViewName.setTextColor(
-            ContextCompat.getColor(itemContext, R.color.status_network)
-        )
+    when {
+        file.isCompletelyDownloaded() -> {
+            holder.textViewName.setTextColor(
+                ContextCompat.getColor(itemContext, R.color.status_local)
+            )
+        }
+        status == FileAdapter.DownloadStatus.DOWNLOADING -> {
+            holder.textViewName.setTextColor(
+                ContextCompat.getColor(itemContext, R.color.status_started)
+            )
+        }
+        file.isPartiallyDownloaded() -> {
+            holder.textViewName.setTextColor(
+                ContextCompat.getColor(itemContext, R.color.status_paused)
+            )
+        }
+        else -> {
+            holder.textViewName.setTextColor(
+                ContextCompat.getColor(itemContext, R.color.status_network)
+            )
+        }
     }
     holder.textViewUrl.text = file.url
     holder.textViewSize.text = file.size
@@ -133,6 +152,13 @@ private fun bindStatus(
                 ContextCompat.getColor(holder.itemView.context, R.color.status_started)
             )
         }
+        FileAdapter.DownloadStatus.PAUSED -> {
+            holder.textViewStatus.visibility = View.VISIBLE
+            holder.textViewStatus.text = "Paused"
+            holder.textViewStatus.setTextColor(
+                ContextCompat.getColor(holder.itemView.context, R.color.status_paused)
+            )
+        }
         FileAdapter.DownloadStatus.COMPLETE -> {
             holder.textViewStatus.visibility = View.VISIBLE
             holder.textViewStatus.text = "Complete"
@@ -184,6 +210,7 @@ class FileAdapter(
         PENDING, // Selected but not started
         STARTED, // Download has started
         DOWNLOADING, // Currently downloading
+        PAUSED, // Download paused (partial file exists)
         COMPLETE, // Download completed
         FAILED, // Download failed
     }
@@ -224,7 +251,7 @@ class FileAdapter(
     override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
         val file = getItem(position)
         setupSelectionUi(holder, getSelectedFiles, file)
-        bindFileTexts(holder, file)
+        bindFileTexts(holder, file, downloadStatus)
         setupCheckbox(holder, getSelectedFiles, file, onFileSelected)
         setupItemClick(holder, file, getSelectedFiles, onFileSelected)
         bindProgress(holder, file, downloadProgress, PERCENT_MIN, PERCENT_MAX)

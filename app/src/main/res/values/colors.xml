@@ -46,6 +46,7 @@
     <!-- Download Status Colors -->
     <color name="status_pending">#9E9E9E</color>
     <color name="status_started">#FF9800</color>
+    <color name="status_paused">#FFC107</color>
     <color name="status_complete">#4CAF50</color>
     <color name="status_failed">#F44336</color>
 </resources> 
