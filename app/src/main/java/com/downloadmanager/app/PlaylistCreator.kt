@@ -11,6 +11,11 @@ class PlaylistCreator(
     private val context: Context,
     private val sdCardUri: Uri?,
 ) {
+    companion object {
+        private const val MIN_FILENAME_LENGTH = 3
+        private const val HASHCODE_LENGTH = 4
+    }
+
     data class Result(val uri: Uri?, val file: File?)
 
     fun create(files: List<DownloadFile>, downloadsDir: File): Result? {
@@ -30,29 +35,83 @@ class PlaylistCreator(
         val builder = StringBuilder()
         builder.append("#EXTM3U\n")
         val sortedFiles = files.sortedWith(compareBy({ !it.isCompletelyDownloaded() }, { it.name }))
-        sortedFiles.forEach { file ->
-            val (title, location) = if (file.isCompletelyDownloaded()) {
-                val localPath = file.getLocalPath()
-                val localFile = localPath?.let { File(it) }
-                val displayTitle = localFile?.name ?: file.name
-                val loc = "file://$localPath"
-                displayTitle to loc
-            } else {
-                // Derive a cleaner title from URL last segment (URL-decoded)
-                val last = file.url.substringAfterLast('/')
-                val decoded = try {
-                    java.net.URLDecoder.decode(last, "UTF-8")
-                } catch (_: Exception) { last }
-                val displayTitle = if (file.name.isNotBlank()) file.name else decoded
-                displayTitle to file.url
-            }
-            builder.append("#EXTINF:-1,${title}\n")
-            builder.append("#EXTVLCOPT:meta-title=${title}\n")
-            builder.append("#EXTVLCOPT:input-title-format=${title}\n")
-            builder.append("#EXTVLCOPT:start-time=0\n")
-            builder.append("$location\n\n")
+
+        android.util.Log.d("PlaylistDebug", "Building playlist with ${sortedFiles.size} files")
+        sortedFiles.forEachIndexed { index, file ->
+            val (title, location) = getFileTitleAndLocation(file)
+            android.util.Log.d(
+                "PlaylistDebug",
+                "File $index: title='$title', location='$location', " +
+                    "downloaded=${file.isCompletelyDownloaded()}"
+            )
+            appendFileToPlaylist(builder, title, location)
         }
-        return builder.toString()
+
+        val content = builder.toString()
+        android.util.Log.d("PlaylistDebug", "Playlist content:\n$content")
+        return content
+    }
+
+    private fun getFileTitleAndLocation(file: DownloadFile): Pair<String, String> {
+        val displayTitle = getUnifiedFileTitle(file)
+        val location = if (file.isCompletelyDownloaded()) {
+            val localPath = file.getLocalPath()
+            "file://$localPath"
+        } else {
+            file.url
+        }
+        return displayTitle to location
+    }
+
+    private fun getUnifiedFileTitle(file: DownloadFile): String {
+        // Use the same naming logic for both downloaded and network files
+        val prefix = if (file.isCompletelyDownloaded()) "Local" else "Network"
+
+        // First try to use the file name from the fetched list
+        if (file.name.isNotBlank() &&
+            !file.name.matches(Regex("^\\d+\\s*\\[.*\\]$")) &&
+            file.name.length > MIN_FILENAME_LENGTH
+        ) {
+            android.util.Log.d("PlaylistDebug", "Using file name: '${file.name}'")
+            return "$prefix - ${file.name}"
+        }
+
+        // If file name is not good, try to extract from URL
+        val extractedTitle = extractTitleFromUrl(file.url)
+        android.util.Log.d("PlaylistDebug", "Using extracted title: '$extractedTitle'")
+        return "$prefix - $extractedTitle"
+    }
+
+    private fun extractTitleFromUrl(url: String): String {
+        val last = url.substringAfterLast('/')
+        val decoded = try {
+            java.net.URLDecoder.decode(last, "UTF-8")
+        } catch (_: Exception) { last }
+
+        // Try to extract a better name from the URL path
+        val pathSegments = url.split('/').filter { it.isNotBlank() }
+        val potentialNames = pathSegments.filter { segment ->
+            segment.contains('.') &&
+                segment.length > MIN_FILENAME_LENGTH &&
+                !segment.matches(Regex("^\\d+\\s*\\[.*\\]$"))
+        }
+
+        val bestName = when {
+            potentialNames.isNotEmpty() -> potentialNames.last()
+            !decoded.matches(Regex("^\\d+\\s*\\[.*\\]$")) &&
+                decoded.length > MIN_FILENAME_LENGTH -> decoded
+            else -> null
+        }
+
+        return bestName ?: "Network Stream ${url.hashCode().toString().takeLast(HASHCODE_LENGTH)}"
+    }
+
+    private fun appendFileToPlaylist(builder: StringBuilder, title: String, location: String) {
+        builder.append("#EXTINF:-1,${title}\n")
+        builder.append("#EXTVLCOPT:meta-title=${title}\n")
+        builder.append("#EXTVLCOPT:input-title-format=${title}\n")
+        builder.append("#EXTVLCOPT:start-time=0\n")
+        builder.append("$location\n\n")
     }
 
     private fun createOnSdCard(files: List<DownloadFile>): Result? {

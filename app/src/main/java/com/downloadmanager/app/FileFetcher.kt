@@ -16,6 +16,10 @@ class FileFetcher(
     private val getFileType: (String) -> String,
     private val getFileSize: (String) -> String,
 ) {
+    companion object {
+        private const val MIN_FILENAME_LENGTH = 5
+        private const val MIN_SHORT_FILENAME_LENGTH = 3
+    }
     fun fetchFromDirectory(url: String): List<DownloadFile> {
         val files = mutableListOf<DownloadFile>()
         val subfolder = getSubfolderName()
@@ -24,11 +28,11 @@ class FileFetcher(
             .asSequence()
             .map { it to it.attr("href") }
             .filter { (_, href) -> href != "../" }
-            .map { (el, _) -> absoluteUrl(url, el) }
-            .filter { it.isNotBlank() }
-            .filter { isValidFileUrl(it) }
-            .forEach { fullUrl ->
-                val fileName = decodeFileName(URI(fullUrl).path.substringAfterLast('/'))
+            .map { (el, href) -> el to absoluteUrl(url, el) }
+            .filter { (_, fullUrl) -> fullUrl.isNotBlank() }
+            .filter { (_, fullUrl) -> isValidFileUrl(fullUrl) }
+            .forEach { (element, fullUrl) ->
+                val fileName = extractBestFileName(element, fullUrl)
                 val fileType = getFileType(fullUrl)
                 val fileSize = getFileSize(fullUrl)
                 files.add(DownloadFile(fileName, fullUrl, fileSize, fileType, subfolder))
@@ -47,11 +51,11 @@ class FileFetcher(
         )
         selectors.asSequence()
             .flatMap { sel -> doc.select(sel).asSequence() }
-            .map { el -> absoluteUrl(url, el) }
-            .filter { it.isNotBlank() }
-            .filter { isValidFileUrl(it) }
-            .forEach { fullUrl ->
-                val fileName = decodeFileName(URI(fullUrl).path.substringAfterLast('/'))
+            .map { el -> el to absoluteUrl(url, el) }
+            .filter { (_, fullUrl) -> fullUrl.isNotBlank() }
+            .filter { (_, fullUrl) -> isValidFileUrl(fullUrl) }
+            .forEach { (element, fullUrl) ->
+                val fileName = extractBestFileName(element, fullUrl)
                 val fileType = getFileType(fullUrl)
                 val fileSize = getFileSize(fullUrl)
                 files.add(DownloadFile(fileName, fullUrl, fileSize, fileType, subfolder))
@@ -89,6 +93,46 @@ class FileFetcher(
         } catch (_: Exception) {
             if (href.startsWith("http")) href else base + href
         }
+    }
+
+    private fun extractBestFileName(element: Element, fullUrl: String): String {
+        // First try to get the link text (display text)
+        val linkText = element.text().trim()
+
+        // Get filename from URL path
+        val urlFileName = try {
+            decodeFileName(URI(fullUrl).path.substringAfterLast('/'))
+        } catch (_: Exception) {
+            fullUrl.substringAfterLast('/')
+        }
+
+        // Choose the best filename based on quality indicators
+        return when {
+            isLinkTextValid(linkText) -> cleanFileName(linkText)
+            isUrlFileNameValid(urlFileName) -> urlFileName
+            linkText.isNotBlank() -> cleanFileName(linkText)
+            else -> urlFileName
+        }
+    }
+
+    private fun isLinkTextValid(linkText: String): Boolean {
+        return linkText.isNotBlank() &&
+            linkText.contains('.') &&
+            linkText.length > MIN_FILENAME_LENGTH &&
+            !linkText.matches(Regex("^\\d+\\s*\\[.*\\]$"))
+    }
+
+    private fun isUrlFileNameValid(urlFileName: String): Boolean {
+        return urlFileName.isNotBlank() &&
+            !urlFileName.matches(Regex("^\\d+\\s*\\[.*\\]$")) &&
+            urlFileName.length > MIN_SHORT_FILENAME_LENGTH
+    }
+
+    private fun cleanFileName(name: String): String {
+        return name
+            .replace(Regex("\\s+"), " ") // Replace multiple spaces with single space
+            .replace(Regex("[<>:\"|?*]"), "_") // Replace invalid filename characters
+            .trim()
     }
 
     private fun decodeFileName(name: String): String {

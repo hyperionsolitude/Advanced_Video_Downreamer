@@ -237,8 +237,7 @@ class MainActivity : AppCompatActivity() {
 
         // Refresh file states when returning from background
         refreshFileStates()
-        // Clean up last playlist file if it exists
-        cleanupLastPlaylist()
+        // Don't clean up playlist here - it will be cleaned up when creating a new one
         updateActionButtons()
     }
 
@@ -281,7 +280,7 @@ class MainActivity : AppCompatActivity() {
         downloadCheckpoints.putAll(restored)
     }
 
-    private fun cleanupLastPlaylist() {
+    internal fun cleanupLastPlaylist() {
         try {
             if (lastPlaylistUri != null) {
                 // SAF playlist (SD card)
