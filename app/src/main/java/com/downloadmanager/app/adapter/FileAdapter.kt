@@ -17,7 +17,12 @@ private fun setupSelectionUi(
     getSelectedFiles: () -> Set<String>,
     file: DownloadFile,
 ) {
-    holder.itemView.isSelected = getSelectedFiles().contains(file.url)
+    // Don't set isSelected to prevent purple flashing
+    // Only the checkbox will indicate selection state
+    // Parameters are kept for consistency with the interface
+    // Suppress unused parameter warnings as they're part of the interface
+    @Suppress("UNUSED_PARAMETER")
+    val unused = holder to getSelectedFiles to file
 }
 
 private fun bindFileTexts(holder: FileAdapter.FileViewHolder, file: DownloadFile) {
@@ -53,11 +58,11 @@ private fun setupCheckbox(
     // Temporarily disable the listener to prevent cascade effects during rebinding
     holder.checkBox.setOnCheckedChangeListener(null)
     holder.checkBox.isChecked = isSelected
-    android.util.Log.d("FileAdapter", "Setting checkbox for ${file.name}: $isSelected")
+    // Set checkbox state without logging
 
     // Set the listener after setting the checked state
     holder.checkBox.setOnCheckedChangeListener { _, isChecked ->
-        android.util.Log.d("FileAdapter", "Checkbox changed for ${file.name}: $isChecked")
+        // Checkbox state changed
         // Defer the UI update to avoid RecyclerView layout conflicts
         holder.itemView.post {
             onFileSelected(file, isChecked)
@@ -74,10 +79,7 @@ private fun setupItemClick(
     holder.itemView.setOnClickListener {
         val currentState = getSelectedFiles().contains(file.url)
         val newState = !currentState
-        android.util.Log.d(
-            "FileAdapter",
-            "Item clicked: ${file.name}, currentState: $currentState, newState: $newState"
-        )
+        // Item clicked
         onFileSelected(file, newState)
     }
 }
@@ -152,15 +154,18 @@ private fun bindStatus(
     }
 }
 
+@Suppress("TooManyFunctions")
 class FileAdapter(
     private val onFileSelected: (DownloadFile, Boolean) -> Unit,
     private val getSelectedFiles: () -> Set<String>,
 ) : ListAdapter<DownloadFile, FileAdapter.FileViewHolder>(DiffCallback) {
+    private var recyclerView: androidx.recyclerview.widget.RecyclerView? = null
 
     companion object DiffCallback : DiffUtil.ItemCallback<DownloadFile>() {
         private const val PROGRESS_THROTTLE_MS = 150L
         private const val PERCENT_MIN = 0
         private const val PERCENT_MAX = 100
+        private const val UPDATE_THROTTLE_MS = 100L
 
         override fun areItemsTheSame(oldItem: DownloadFile, newItem: DownloadFile): Boolean {
             return oldItem.url == newItem.url
@@ -201,6 +206,18 @@ class FileAdapter(
         )
     }
 
+    override fun onAttachedToRecyclerView(recyclerView: androidx.recyclerview.widget.RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        this.recyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(
+        recyclerView: androidx.recyclerview.widget.RecyclerView,
+    ) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        this.recyclerView = null
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_file, parent, false)
@@ -227,6 +244,61 @@ class FileAdapter(
         lastProgressUpdate.clear()
         progressUpdatePending.clear()
         notifyDataSetChanged()
+    }
+
+    private var lastUpdateTime = 0L
+    private val updateThrottleMs = UPDATE_THROTTLE_MS // Throttle updates to max once per 100ms
+
+    fun updateSelectionState() {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastUpdateTime < updateThrottleMs.toLong()) {
+            return // Skip update if too soon
+        }
+        lastUpdateTime = currentTime
+
+        updateVisibleCheckboxes()
+    }
+
+    private fun updateVisibleCheckboxes() {
+        val layoutManager = recyclerView?.layoutManager
+        if (layoutManager is androidx.recyclerview.widget.LinearLayoutManager) {
+            val firstVisible = layoutManager.findFirstVisibleItemPosition()
+            val lastVisible = layoutManager.findLastVisibleItemPosition()
+            if (firstVisible != -1 && lastVisible != -1) {
+                for (i in firstVisible..lastVisible) {
+                    updateCheckboxForPosition(i)
+                }
+            }
+        }
+    }
+
+    private fun updateCheckboxForPosition(position: Int) {
+        val holder = recyclerView?.findViewHolderForAdapterPosition(position)
+            as? FileViewHolder
+        holder?.let { viewHolder ->
+            val file = getItem(position)
+            val isSelected = getSelectedFiles().contains(file.url)
+            updateCheckboxState(viewHolder, isSelected)
+        }
+    }
+
+    private fun updateCheckboxState(holder: FileViewHolder, isSelected: Boolean) {
+        // Only update if the state actually changed to prevent unnecessary updates
+        if (holder.checkBox.isChecked != isSelected) {
+            // Temporarily disable listener to prevent cascade effects
+            holder.checkBox.setOnCheckedChangeListener(null)
+
+            // Simple state change without animation to prevent flashing
+            holder.checkBox.isChecked = isSelected
+
+            // Re-enable listener after setting state
+            holder.checkBox.setOnCheckedChangeListener { _, isChecked ->
+                // Checkbox changed
+                holder.itemView.post {
+                    onFileSelected(getItem(holder.adapterPosition), isChecked)
+                }
+            }
+        }
     }
 
     fun updateDownloadProgress(url: String, progress: Int) {

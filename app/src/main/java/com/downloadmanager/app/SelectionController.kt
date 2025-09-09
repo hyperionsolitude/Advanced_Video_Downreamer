@@ -1,6 +1,5 @@
 package com.downloadmanager.app
 
-import com.downloadmanager.app.adapter.FileAdapter
 import com.downloadmanager.app.model.DownloadFile
 import java.util.Locale
 
@@ -59,23 +58,12 @@ class SelectionController(
 
     fun updateActionButtons() {
         val selected = main.viewModel.selectedFiles.value?.size ?: 0
-        android.util.Log.d("SelectionController", "updateActionButtons: selected count: $selected")
         main.buttonDownload.isEnabled = selected > 0
         main.buttonStream.isEnabled = selected > 0
         main.textViewSelectedCount.text = "Selected: $selected"
 
-        // Instead of notifyDataSetChanged(), update only the visible items
-        val adapter = main.recyclerViewFiles.adapter as? FileAdapter
-        val layoutManager = main.recyclerViewFiles.layoutManager
-        if (layoutManager is androidx.recyclerview.widget.LinearLayoutManager) {
-            val firstVisible = layoutManager.findFirstVisibleItemPosition()
-            val lastVisible = layoutManager.findLastVisibleItemPosition()
-            if (firstVisible != -1 && lastVisible != -1) {
-                for (i in firstVisible..lastVisible) {
-                    adapter?.notifyItemChanged(i)
-                }
-            }
-        }
+        // Don't update the adapter here to prevent loops
+        // The adapter will update when items are clicked directly
     }
 
     fun updateSelectedSizeInfo() {

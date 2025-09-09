@@ -988,6 +988,9 @@ class MainActivity : AppCompatActivity() {
             textViewSelectedCount.text = "Selected: ${selected.size}"
             updateActionButtons()
             updateSelectedSizeInfo()
+            // Notify adapter to update checkbox states
+            val adapter = recyclerViewFiles.adapter as? FileAdapter
+            adapter?.notifyDataSetChanged()
         }
     }
 }

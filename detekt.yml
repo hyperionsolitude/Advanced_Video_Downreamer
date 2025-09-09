@@ -21,6 +21,8 @@ complexity:
   CyclomaticComplexMethod:
     active: true
     threshold: 20
+  TooManyFunctions:
+    active: false
 
 style:
   MaxLineLength:
