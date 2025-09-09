@@ -8,7 +8,7 @@ import com.downloadmanager.app.BuildConfig
  * Automatically handles debug/release builds
  */
 object Logger {
-    private const val TAG_PREFIX = "AdvancedVideoDownreamer"
+    private const val TAG_PREFIX = "AdvVideoDownreamer"
 
     fun d(tag: String, message: String, throwable: Throwable? = null) {
         if (BuildConfig.DEBUG) {

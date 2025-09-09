@@ -51,7 +51,16 @@ A powerful Android download manager primarily designed for downloading video fil
    - Open the project folder
    - Wait for Gradle sync to complete
 
-3. **Build and Install**
+3. **Run Quality Checks (Optional)**
+   ```bash
+   # Sort imports and run all QA checks
+   ./scripts/sort_imports.sh
+   
+   # Or run individual checks
+   ./gradlew detekt ktlintMainSourceSetCheck lintDebug
+   ```
+
+4. **Build and Install**
    ```bash
    ./gradlew assembleDebug
    ./gradlew installDebug
@@ -59,6 +68,27 @@ A powerful Android download manager primarily designed for downloading video fil
 
 ### APK Installation
 Download the latest APK from the [Releases](https://github.com/hyperionsolitude/Advanced_Video_Downreamer/releases) page and install on your Android device.
+
+## 🔄 CI/CD Pipeline
+
+This project uses GitHub Actions for automated quality assurance and builds:
+
+### Quality Assurance Workflow
+- **Detekt**: Static code analysis for Kotlin
+- **KtLint**: Code style and formatting checks
+- **Android Lint**: Android-specific code analysis
+- **Import Sorting**: Automatic import organization
+
+### Build Workflow
+- **Unit Tests**: Automated test execution
+- **Debug APK**: Build and upload debug APK
+- **Release APK**: Build and upload release APK
+- **Artifact Upload**: Test results and QA reports
+
+### Workflow Triggers
+- Push to `main` or `develop` branches
+- Pull requests to `main` or `develop` branches
+- Manual workflow dispatch
 
 ## 🚀 Usage
 

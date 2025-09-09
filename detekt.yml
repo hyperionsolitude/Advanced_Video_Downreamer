@@ -1,81 +1,28 @@
 build:
-  maxIssues: 9999
+  maxIssues: 0
   excludeCorrectable: false
 
 config:
   validation: true
-
-processors:
-  active: true
-
-console-reports:
-  active: true
-  exclude:
-    - 'ProjectStatisticsReport'
-    - 'ComplexityReport'
-    - 'NotificationReport'
-
-comments:
-  UndocumentedPublicClass:
-    active: false
-  UndocumentedPublicFunction:
-    active: false
-
-style:
-  MagicNumber:
-    active: false
-  WildcardImport:
-    active: false
-  MaxLineLength:
-    active: false
-  NewLineAtEndOfFile:
-    active: true
-  UnusedParameter:
-    active: false
-  FunctionOnlyReturningConstant:
-    active: false
-
-performance:
-  SpreadOperator:
-    active: false
+  warningsAsErrors: true
 
 formatting:
   active: true
   android: true
   AutoCorrect:
     active: true
-  FinalNewline:
-    active: true
-  MaximumLineLength:
-    active: false
   ImportOrdering:
     active: false
 
 complexity:
-  LongMethod:
-    active: false
-  CyclomaticComplexMethod:
-    active: false
   LargeClass:
-    active: false
-  TooManyFunctions:
-    active: false
-  NestedBlockDepth:
-    active: false
+    active: true
+    threshold: 800
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 20
 
-exceptions:
-  TooGenericExceptionCaught:
-    active: false
-  SwallowedException:
-    active: false
-
-potential-bugs:
-  ExplicitGarbageCollectionCall:
-    active: false
-
-naming:
-  VariableNaming:
-    active: false
-
- 
-
+style:
+  MaxLineLength:
+    active: true
+    maxLineLength: 120

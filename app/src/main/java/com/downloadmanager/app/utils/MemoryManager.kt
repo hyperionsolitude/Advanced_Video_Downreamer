@@ -9,8 +9,20 @@ import java.lang.ref.WeakReference
  */
 object MemoryManager {
 
-    private const val MAX_MEMORY_CACHE_SIZE = 50 * 1024 * 1024 // 50MB
-    private const val LOW_MEMORY_THRESHOLD = 100 * 1024 * 1024 // 100MB
+    private const val BYTES_IN_KILOBYTE = 1024
+    private const val BYTES_IN_MEGABYTE = 1024 * 1024
+    private const val MAX_MEMORY_CACHE_SIZE_BYTES = 50 * BYTES_IN_MEGABYTE // 50MB
+    private const val LOW_MEMORY_THRESHOLD_BYTES = 100 * BYTES_IN_MEGABYTE // 100MB
+    private const val LOW_AVAILABLE_MEMORY_BYTES = 200 * BYTES_IN_MEGABYTE
+    private const val MED_AVAILABLE_MEMORY_BYTES = 500 * BYTES_IN_MEGABYTE
+    private const val BUFFER_LOW_BYTES = 8 * BYTES_IN_KILOBYTE
+    private const val BUFFER_MED_BYTES = 16 * BYTES_IN_KILOBYTE
+    private const val BUFFER_HIGH_BYTES = 32 * BYTES_IN_KILOBYTE
+    private const val PERCENT_80 = 80f
+    private const val PERCENT_100 = 100f
+    private const val THREAD_POOL_SMALL = 1
+    private const val THREAD_POOL_MEDIUM_MAX = 2
+    private const val THREAD_POOL_LARGE_MAX = 4
 
     /**
      * Check if device is low on memory
@@ -19,7 +31,7 @@ object MemoryManager {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memoryInfo)
-        return memoryInfo.availMem < LOW_MEMORY_THRESHOLD
+        return memoryInfo.availMem < LOW_MEMORY_THRESHOLD_BYTES
     }
 
     /**
@@ -48,23 +60,21 @@ object MemoryManager {
     fun getMemoryUsagePercentage(context: Context): Float {
         val total = getTotalMemory(context)
         val available = getAvailableMemory(context)
-        return ((total - available).toFloat() / total.toFloat()) * 100f
+        return ((total - available).toFloat() / total.toFloat()) * PERCENT_100
     }
 
     /**
      * Force garbage collection
      */
     fun forceGarbageCollection() {
-        System.gc()
-        System.runFinalization()
-        System.gc()
+        // No-op: Avoid explicit GC calls
     }
 
     /**
      * Check if memory cache should be cleared
      */
     fun shouldClearCache(context: Context): Boolean {
-        return isLowMemory(context) || getMemoryUsagePercentage(context) > 80f
+        return isLowMemory(context) || getMemoryUsagePercentage(context) > PERCENT_80
     }
 
     /**
@@ -73,9 +83,9 @@ object MemoryManager {
     fun getRecommendedBufferSize(context: Context): Int {
         val availableMemory = getAvailableMemory(context)
         return when {
-            availableMemory < 200 * 1024 * 1024 -> 8192 // 8KB for low memory
-            availableMemory < 500 * 1024 * 1024 -> 16384 // 16KB for medium memory
-            else -> 32768 // 32KB for high memory
+            availableMemory < LOW_AVAILABLE_MEMORY_BYTES -> BUFFER_LOW_BYTES
+            availableMemory < MED_AVAILABLE_MEMORY_BYTES -> BUFFER_MED_BYTES
+            else -> BUFFER_HIGH_BYTES
         }
     }
 
@@ -86,9 +96,11 @@ object MemoryManager {
         val availableMemory = getAvailableMemory(context)
         val cores = Runtime.getRuntime().availableProcessors()
         return when {
-            availableMemory < 200 * 1024 * 1024 -> 1 // Single thread for low memory
-            availableMemory < 500 * 1024 * 1024 -> cores.coerceAtMost(2) // Max 2 threads
-            else -> cores.coerceAtMost(4) // Max 4 threads
+            availableMemory < LOW_AVAILABLE_MEMORY_BYTES -> THREAD_POOL_SMALL
+            availableMemory < MED_AVAILABLE_MEMORY_BYTES -> cores.coerceAtMost(
+                THREAD_POOL_MEDIUM_MAX
+            )
+            else -> cores.coerceAtMost(THREAD_POOL_LARGE_MAX)
         }
     }
 
@@ -101,7 +113,7 @@ object MemoryManager {
 
         fun put(key: K, value: V) {
             // Remove oldest entries if cache is too large
-            while (cache.size > MAX_MEMORY_CACHE_SIZE / 1024) { // Rough estimate
+            while (cache.size > MAX_MEMORY_CACHE_SIZE_BYTES / BYTES_IN_KILOBYTE) { // Rough estimate
                 val oldestKey = accessOrder.removeFirstOrNull()
                 if (oldestKey != null) {
                     cache.remove(oldestKey)

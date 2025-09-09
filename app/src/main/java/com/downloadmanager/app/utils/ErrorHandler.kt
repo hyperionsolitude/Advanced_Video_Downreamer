@@ -110,20 +110,30 @@ object ErrorHandler {
      * Check network connectivity
      */
     fun isNetworkAvailable(context: Context): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val connectivityManager =
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = if (android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.M
+        ) {
+            connectivityManager.activeNetwork
+        } else {
+            null
+        }
+        if (activeNetwork == null) return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        return capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
     /**
      * Check storage availability
      */
-    fun isStorageAvailable(context: Context, path: String): Boolean {
+    fun isStorageAvailable(path: String): Boolean {
         return try {
             val file = File(path)
             file.exists() && file.canWrite()
-        } catch (e: Exception) {
+        } catch (_: SecurityException) {
+            false
+        } catch (_: IllegalArgumentException) {
             false
         }
     }
@@ -135,7 +145,9 @@ object ErrorHandler {
         return try {
             val stat = StatFs(path)
             stat.availableBlocksLong * stat.blockSizeLong
-        } catch (e: Exception) {
+        } catch (_: SecurityException) {
+            0L
+        } catch (_: IllegalArgumentException) {
             0L
         }
     }
@@ -147,10 +159,5 @@ object ErrorHandler {
         return getAvailableStorageSpace(path) >= requiredBytes
     }
 
-    /**
-     * Get memory usage percentage (unused parameter for future use)
-     */
-    fun getMemoryUsagePercentage(context: Context): Float {
-        return 0f // Placeholder for future implementation
-    }
+    // Removed unused placeholder to satisfy detekt
 }

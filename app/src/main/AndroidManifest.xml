@@ -16,7 +16,9 @@
     
     <!-- Foreground service for downloads -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Corrected: DATA_SYNC is not a separate permission on older APIs -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+        tools:targetApi="34" />
     
     <!-- Wake lock for downloads -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

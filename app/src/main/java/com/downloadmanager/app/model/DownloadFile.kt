@@ -53,20 +53,23 @@ data class DownloadFile(
      */
     private fun parseFileSizeToBytes(): Long? {
         val s = size.trim().lowercase()
-        return when {
+        android.util.Log.d("DownloadFile", "Parsing size: '$s'")
+        val result = when {
             s.endsWith("gb") -> (
-                (s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024 * 1024
+                (s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) * BYTES_IN_GIGABYTE
                 ).toLong()
             s.endsWith("mb") -> (
-                (s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) * 1024 * 1024
+                (s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) * BYTES_IN_MEGABYTE
                 ).toLong()
             s.endsWith("kb") -> (
-                (s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) * 1024
+                (s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) * BYTES_IN_KILOBYTE
                 ).toLong()
             s.endsWith("b") -> (s.removeSuffix("b").trim().toDoubleOrNull() ?: 0.0).toLong()
             s == "unknown size" -> null
             else -> null
         }
+        android.util.Log.d("DownloadFile", "Parsed size: $result")
+        return result
     }
 
     /**
@@ -79,6 +82,9 @@ data class DownloadFile(
     }
 
     companion object CREATOR : Parcelable.Creator<DownloadFile> {
+        private const val BYTES_IN_KILOBYTE = 1024.0
+        private const val BYTES_IN_MEGABYTE = BYTES_IN_KILOBYTE * 1024.0
+        private const val BYTES_IN_GIGABYTE = BYTES_IN_MEGABYTE * 1024.0
         var downloadDir: File? = null
         fun setDownloadDirectory(dir: File) {
             downloadDir = dir

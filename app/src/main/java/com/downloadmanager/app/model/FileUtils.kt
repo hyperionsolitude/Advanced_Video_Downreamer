@@ -1,9 +1,16 @@
 package com.downloadmanager.app.model
 
+import android.content.Context
 import android.os.Environment
 import java.io.File
+import kotlin.math.abs
 
 object FileUtils {
+    private const val ONE_MB: Long = 1024 * 1024
+    private const val TOLERANCE_PERCENT = 1
+    private const val ZERO_LONG = 0L
+    private const val ONE_HUNDRED = 100
+
     fun getDownloadDir(baseDir: File?, subfolder: String? = null): File {
         val dir = baseDir ?: File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -19,9 +26,10 @@ object FileUtils {
 
     fun fileExists(baseDir: File?, fileName: String, subfolder: String?): Boolean {
         val file = getLocalFile(baseDir, fileName, subfolder)
-        return file.exists() && file.length() > 0
+        return file.exists() && file.length() > ZERO_LONG
     }
 
+    @Suppress("ReturnCount")
     fun isFileComplete(
         baseDir: File?,
         fileName: String,
@@ -29,35 +37,49 @@ object FileUtils {
         expectedSize: Long? = null,
     ): Boolean {
         val file = getLocalFile(baseDir, fileName, subfolder)
-        if (!file.exists() || file.length() == 0L) return false
+        val existsAndNotEmpty = file.exists() && file.length() != ZERO_LONG
+        if (!existsAndNotEmpty) return false
 
-        // If we have expected size, check if file is complete
-        if (expectedSize != null && expectedSize > 0) {
-            return file.length() >= expectedSize
-        }
-
-        // For files without expected size, consider them complete if they exist and have content
-        return file.length() > 0
+        val actualSize = file.length()
+        // If we don't know expected size, treat existing non-empty file as complete
+        val expected = expectedSize
+        if (expected == null) return true
+        // Allow for small differences (up to 1% or 1MB, whichever is smaller)
+        val tolerance = minOf((expected * TOLERANCE_PERCENT / ONE_HUNDRED), ONE_MB)
+        val isWithinTolerance = abs(expected - actualSize) <= tolerance
+        return isWithinTolerance
     }
 
     fun deleteFileIfZeroLength(baseDir: File?, fileName: String, subfolder: String?): Boolean {
         val file = getLocalFile(baseDir, fileName, subfolder)
-        return if (file.exists() && file.length() == 0L) file.delete() else false
+        return if (file.exists() && file.length() == ZERO_LONG) file.delete() else false
     }
 
     fun safeDelete(file: File): Boolean {
         return try {
-            if (file.exists()) {
-                if (file.isDirectory) file.deleteRecursively() else file.delete()
-            } else {
-                true
-            }
-        } catch (e: Exception) {
+            if (!file.exists()) return true
+            if (file.isDirectory) file.deleteRecursively() else file.delete()
+        } catch (_: SecurityException) {
+            false
+        } catch (_: IllegalArgumentException) {
             false
         }
     }
 
     fun ensureDirExists(dir: File): Boolean {
         return if (!dir.exists()) dir.mkdirs() else dir.isDirectory
+    }
+
+    fun sanitizeFileName(name: String): String {
+        // Replace characters that are problematic on common filesystems
+        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .replace(Regex("\n|\r|\t"), " ")
+            .trim()
+    }
+
+    fun getAppExternalDownloadDir(context: Context, subfolder: String? = null): File {
+        val base = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(context.filesDir, "downloads")
+        return if (subfolder.isNullOrEmpty()) base else File(base, subfolder)
     }
 }

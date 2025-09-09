@@ -1,16 +1,17 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-kapt'
 apply plugin: 'org.jlleitschuh.gradle.ktlint'
 apply plugin: 'io.gitlab.arturbosch.detekt'
 
 android {
     namespace 'com.downloadmanager.app'
-    compileSdkVersion 33
+    compileSdkVersion 34
 
     defaultConfig {
         applicationId "com.downloadmanager.app"
         minSdkVersion 21
-        targetSdkVersion 33
+        targetSdkVersion 34
         versionCode 1
         versionName "1.0"
     }
@@ -59,13 +60,15 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.7.10"
-    implementation 'androidx.core:core-ktx:1.9.0'
-    implementation 'androidx.appcompat:appcompat:1.5.1'
-    implementation 'com.google.android.material:material:1.7.0'
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     implementation 'org.jsoup:jsoup:1.15.4'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.5.1'
-    implementation 'androidx.activity:activity-ktx:1.6.1'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    // Fix R8 warnings: javax.annotation classes used by jsoup
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
     detektPlugins "io.gitlab.arturbosch.detekt:detekt-formatting:1.23.6"
 } 
 

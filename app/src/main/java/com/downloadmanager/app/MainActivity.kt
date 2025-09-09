@@ -2,7 +2,6 @@ package com.downloadmanager.app
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -11,7 +10,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.DocumentsContract
 import android.util.Log
 import android.view.View
 import android.widget.Button
@@ -23,7 +21,6 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -37,7 +34,6 @@ import com.downloadmanager.app.utils.MemoryManager
 import com.downloadmanager.app.viewmodel.MainViewModel
 import com.google.android.material.snackbar.Snackbar
 import java.io.File
-import java.io.FileOutputStream
 import java.net.ConnectException
 import java.net.URL
 import java.util.Locale
@@ -47,9 +43,27 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.jsoup.Jsoup
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val READ_TIMEOUT_MS = 30_000
+        private const val USER_AGENT = "Mozilla/5.0 (Android) Advanced Video Downreamer"
+        private const val CONNECT_TIMEOUT_SHORT_MS = 3_000
+        private const val READ_TIMEOUT_SHORT_MS = 3_000
+        private const val BYTES_IN_KILOBYTE = 1_024
+        private const val BYTES_IN_MEGABYTE = 1_024 * 1_024
+        private const val BYTES_IN_GIGABYTE = 1_024 * 1_024 * 1_024
+        private const val DEFAULT_PERMISSION_REQUEST_CODE = 123
+        private const val DEFAULT_PROGRESS_UPDATE_INTERVAL_MS = 200L
+        private const val JSOUP_TIMEOUT_MS = 8_000
+        private const val PERCENT_0 = 0
+        private const val PERCENT_2 = 2
+        private const val PERCENT_100 = 100
+        private const val RETRY_DELAY_MS = 2000L
+        private const val MAX_RETRIES = 3
+    }
 
     private lateinit var editTextUrl: EditText
 
@@ -58,26 +72,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var buttonChangeStorage: Button
     private lateinit var editTextFilter: EditText
     private lateinit var textViewFileCount: TextView
-    private lateinit var textViewSelectedCount: TextView
+    internal lateinit var textViewSelectedCount: TextView
     private lateinit var buttonSelectAll: Button
     private lateinit var buttonDeselectAll: Button
-    private lateinit var buttonDownload: Button
-    private lateinit var buttonStream: Button
+    internal lateinit var buttonDownload: Button
+    internal lateinit var buttonStream: Button
     private lateinit var progressBar: ProgressBar
-    private lateinit var recyclerViewFiles: RecyclerView
+    internal lateinit var recyclerViewFiles: RecyclerView
     private lateinit var swipeRefresh: SwipeRefreshLayout
-    private lateinit var textViewSelectedSize: TextView
+    internal lateinit var textViewSelectedSize: TextView
     private lateinit var buttonInvertSelection: com.google.android.material.button.MaterialButton
     private lateinit var buttonSelectNone: com.google.android.material.button.MaterialButton
 
     @Suppress("UnusedPrivateProperty")
-    private val PERMISSION_REQUEST_CODE = 123
-    private val REQUIRED_PERMISSIONS = arrayOf(
+    private val permissionRequestCode = DEFAULT_PERMISSION_REQUEST_CODE
+    private val requiredPermissions = arrayOf(
         Manifest.permission.WRITE_EXTERNAL_STORAGE,
         Manifest.permission.READ_EXTERNAL_STORAGE
     )
 
-    private val viewModel: MainViewModel by viewModels()
+    internal val viewModel: MainViewModel by viewModels()
 
     private val requestPermissionsLauncher =
         registerForActivityResult(
@@ -91,13 +105,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-    private lateinit var binding: ActivityMainBinding
-    private val PREFS_NAME = "download_manager_prefs"
-    private val KEY_STORAGE_PATH = "storage_path"
+    internal lateinit var binding: ActivityMainBinding
+    private val prefsName = "download_manager_prefs"
+    private val keyStoragePath = "storage_path"
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val KEY_SD_URI = "sd_card_uri"
+    private val keySdUri = "sd_card_uri"
     private lateinit var prefs: SharedPreferences
-    private var sdCardUri: Uri? = null
+    internal var sdCardUri: Uri? = null
+
+    // Delegates
+    private val fileFetcher = FileFetcher(
+        userAgent = USER_AGENT,
+        jsoupTimeoutMs = JSOUP_TIMEOUT_MS,
+        getSubfolderName = { getSubfolderNameFromUrl() },
+        getFileType = { href -> getFileType(href) },
+        getFileSize = { url -> getFileSize(url) }
+    )
+    private val storageController by lazy { StorageController(this) }
 
     // Performance optimization: Throttle UI updates
     private val progressUpdateHandler = Handler(Looper.getMainLooper())
@@ -109,7 +133,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private var lastProgressUpdate = 0L
-    private val PROGRESS_UPDATE_INTERVAL = 200L // Optimized to 200ms for better responsiveness
+    private val progressUpdateInterval = DEFAULT_PROGRESS_UPDATE_INTERVAL_MS // Optimized
     private val progressUpdateQueue = mutableMapOf<String, Int>() // Queue progress updates
 
     // Performance optimization: Coroutine scope for downloads
@@ -121,24 +145,11 @@ class MainActivity : AppCompatActivity() {
 
     // Memory management
     private val memoryManager = MemoryManager
-    private val openDocumentTreeLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) {
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                prefs.edit().putString(KEY_SD_URI, uri.toString()).apply()
-                sdCardUri = uri
-                showSnackbar("SD card access granted. Please try streaming again.")
-            } else {
-                showSnackbar("SD card access not granted.")
-            }
-        }
+    // OpenDocumentTree launcher is no longer needed after delegating playback
 
     // Store the last playlist file/URI for cleanup
-    private var lastPlaylistFile: File? = null
-    private var lastPlaylistUri: Uri? = null
+    internal var lastPlaylistFile: File? = null
+    internal var lastPlaylistUri: Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,13 +157,13 @@ class MainActivity : AppCompatActivity() {
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        sdCardUri = prefs.getString(KEY_SD_URI, null)?.let { Uri.parse(it) }
+        prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
+        sdCardUri = prefs.getString(keySdUri, null)?.let { Uri.parse(it) }
 
         Logger.d("MainActivity", "Memory usage: ${memoryManager.getMemoryUsagePercentage(this)}%")
         Logger.d(
             "MainActivity",
-            "Available memory: ${memoryManager.getAvailableMemory(this) / 1024 / 1024}MB"
+            "Available memory: ${memoryManager.getAvailableMemory(this) / BYTES_IN_MEGABYTE}MB"
         )
 
         initializeViews()
@@ -172,7 +183,6 @@ class MainActivity : AppCompatActivity() {
         if (memoryManager.shouldClearCache(this)) {
             fileTypeCache.clear()
             fileSizeCache.clear()
-            memoryManager.forceGarbageCollection()
             Logger.d("MemoryManager", "Cleared caches due to low memory")
         }
 
@@ -216,8 +226,10 @@ class MainActivity : AppCompatActivity() {
                 lastPlaylistFile!!.delete()
                 lastPlaylistFile = null
             }
-        } catch (e: Exception) {
-            Log.e("Playlist", "Error cleaning up playlist: ${e.message}", e)
+        } catch (e: SecurityException) {
+            Log.e("Playlist", "Security error cleaning up playlist: ${e.message}", e)
+        } catch (e: IllegalArgumentException) {
+            Log.e("Playlist", "Invalid argument cleaning up playlist: ${e.message}", e)
         }
     }
 
@@ -249,7 +261,7 @@ class MainActivity : AppCompatActivity() {
             handleFileSelection(file, isSelected)
         }
         recyclerViewFiles.adapter = adapter
-        adapter.attachRecyclerView(recyclerViewFiles)
+        // No longer needed; adapter updates via notifyItemChanged
 
         // Setup SwipeRefreshLayout
         swipeRefresh.setOnRefreshListener {
@@ -329,7 +341,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun fetchFiles(url: String) {
+    internal fun fetchFiles(url: String) {
         Logger.d("MainActivity", "fetchFiles started for URL: $url")
 
         if (!ErrorHandler.isNetworkAvailable(this)) {
@@ -350,129 +362,82 @@ class MainActivity : AppCompatActivity() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val files = when {
-                    url.endsWith("/") || isDirectoryUrl(url) -> {
-                        // Directory listing
-                        fetchFilesFromDirectory(url)
-                    }
-                    isDirectFileUrl(url) -> {
-                        // Single file
-                        listOf(createDownloadFileFromUrl(url))
-                    }
-                    else -> {
-                        // Try to parse as HTML page
-                        fetchFilesFromHtmlPage(url)
-                    }
-                }
-
-                val filteredFiles = files
-
-                // Delete any zero-length files and partial downloads for all fetched files
-                for (file in filteredFiles) {
-                    val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
-                    FileUtils.deleteFileIfZeroLength(
-                        viewModel.currentStorageDir.value,
-                        fileName,
-                        file.subfolder
-                    )
-                    // Also clean up partial downloads (files that exist but are not complete)
-                    if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
-                        val localFile = FileUtils.getLocalFile(
-                            viewModel.currentStorageDir.value,
-                            fileName,
-                            file.subfolder
-                        )
-                        if (localFile.exists()) {
-                            FileUtils.safeDelete(localFile)
-                        }
-                    }
-                }
-
+                val files = determineFilesForUrl(url)
+                cleanupFetchedFiles(files)
                 withContext(Dispatchers.Main) {
-                    Logger.d("MainActivity", "Successfully fetched ${filteredFiles.size} files")
-                    viewModel.setFiles(filteredFiles)
-
-                    textViewFileCount.text = "Files: ${viewModel.currentFiles.value?.size ?: 0}"
-                    textViewSelectedCount.text = "Selected: 0"
-
-                    progressBar.visibility = View.GONE
-                    buttonFetch.isEnabled = true
-                    swipeRefresh.isRefreshing = false
-
-                    showSnackbar("Fetched ${filteredFiles.size} files")
+                    updateUiAfterFetch(files)
                 }
-            } catch (e: Exception) {
-                Logger.e("MainActivity", "Error fetching files: ${e.message}", e)
-                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
-                val suggestion = ErrorHandler.getSuggestedAction(e, this@MainActivity)
-                withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
-                    buttonFetch.isEnabled = true
-                    swipeRefresh.isRefreshing = false
-                    showSnackbar("$errorMessage\n$suggestion", true)
-                }
+            } catch (e: java.io.IOException) {
+                handleFetchError(e)
+            } catch (e: IllegalArgumentException) {
+                handleFetchError(e)
             }
         }
     }
 
-    private fun fetchFilesFromDirectory(url: String): List<DownloadFile> {
-        val files = mutableListOf<DownloadFile>()
-        val subfolder = getSubfolderNameFromUrl()
-        try {
-            val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Android) Advanced Video Downreamer")
-                .timeout(8000) // Reduced timeout for faster response
-                .maxBodySize(0) // No body size limit
-                .get()
-            val links = doc.select("a[href]")
-            for (link in links) {
-                val href = link.attr("href")
-                if (isValidFileUrl(href)) {
-                    val fullUrl = if (href.startsWith("http")) href else "$url$href"
-                    val fileName = link.text().ifEmpty { href.substringAfterLast("/") }
-                    val fileType = getFileType(href)
-                    val fileSize = getFileSize(fullUrl)
-                    files.add(DownloadFile(fileName, fullUrl, fileSize, fileType, subfolder))
-                }
+    private fun determineFilesForUrl(url: String): List<DownloadFile> {
+        return when {
+            url.endsWith("/") || isDirectoryUrl(url) -> {
+                fileFetcher.fetchFromDirectory(url)
             }
-        } catch (e: Exception) {
-            Logger.e("MainActivity", "Error parsing directory: ${e.message}", e)
+            isDirectFileUrl(url) -> {
+                listOf(createDownloadFileFromUrl(url))
+            }
+            else -> {
+                fileFetcher.fetchFromHtml(url)
+            }
         }
-        return files
     }
 
-    private fun fetchFilesFromHtmlPage(url: String): List<DownloadFile> {
-        val files = mutableListOf<DownloadFile>()
-        val subfolder = getSubfolderNameFromUrl()
-        try {
-            val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Android) Advanced Video Downreamer")
-                .timeout(8000) // Reduced timeout for faster response
-                .maxBodySize(0) // No body size limit
-                .get()
-            val fileSelectors = listOf(
-                "a[href*='.mp4']", "a[href*='.mkv']", "a[href*='.avi']", "a[href*='.mov']",
-                "a[href*='.mp3']", "a[href*='.wav']", "a[href*='.flac']", "a[href*='.aac']",
-                "a[href*='.pdf']", "a[href*='.zip']", "a[href*='.rar']"
+    private suspend fun handleFetchError(e: Exception) {
+        Logger.e("MainActivity", "Error fetching files: ${e.message}", e)
+        val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+        val suggestion = ErrorHandler.getSuggestedAction(e, this@MainActivity)
+        withContext(Dispatchers.Main) {
+            progressBar.visibility = View.GONE
+            buttonFetch.isEnabled = true
+            swipeRefresh.isRefreshing = false
+            showSnackbar("$errorMessage\n$suggestion", true)
+        }
+    }
+
+    private fun cleanupFetchedFiles(files: List<DownloadFile>) {
+        for (file in files) {
+            val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
+            FileUtils.deleteFileIfZeroLength(
+                viewModel.currentStorageDir.value,
+                fileName,
+                file.subfolder
             )
-            for (selector in fileSelectors) {
-                val links = doc.select(selector)
-                for (link in links) {
-                    val href = link.attr("href")
-                    if (isValidFileUrl(href)) {
-                        val fullUrl = if (href.startsWith("http")) href else "$url$href"
-                        val fileName = link.text().ifEmpty { href.substringAfterLast("/") }
-                        val fileType = getFileType(href)
-                        val fileSize = getFileSize(fullUrl)
-                        files.add(DownloadFile(fileName, fullUrl, fileSize, fileType, subfolder))
-                    }
+            if (file.isDownloaded() && !file.isCompletelyDownloaded()) {
+                val localFile = FileUtils.getLocalFile(
+                    viewModel.currentStorageDir.value,
+                    fileName,
+                    file.subfolder
+                )
+                if (localFile.exists()) {
+                    FileUtils.safeDelete(localFile)
                 }
             }
-        } catch (e: Exception) {
-            Logger.e("MainActivity", "Error parsing HTML page: ${e.message}", e)
         }
-        return files
     }
+
+    private fun updateUiAfterFetch(files: List<DownloadFile>) {
+        Logger.d("MainActivity", "Successfully fetched ${files.size} files")
+        viewModel.setFiles(files)
+        textViewFileCount.text = "Files: ${viewModel.currentFiles.value?.size ?: 0}"
+        textViewSelectedCount.text = "Selected: 0"
+        progressBar.visibility = View.GONE
+        buttonFetch.isEnabled = true
+        swipeRefresh.isRefreshing = false
+        showSnackbar("Fetched ${files.size} files")
+    }
+
+    // delegated to FileFetcher
+
+    // delegated to FileFetcher
+
+    // delegated to FileFetcher
 
     private fun createDownloadFileFromUrl(url: String): DownloadFile {
         val fileName = url.substringAfterLast("/")
@@ -518,11 +483,11 @@ class MainActivity : AppCompatActivity() {
         return fileSizeCache.get(url) ?: run {
             val fileSize = try {
                 val connection = URL(url).openConnection()
-                connection.connectTimeout = 3000 // Reduced timeout for faster response
-                connection.readTimeout = 3000
+                connection.connectTimeout = CONNECT_TIMEOUT_SHORT_MS // Reduced timeout
+                connection.readTimeout = READ_TIMEOUT_SHORT_MS
                 connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Android) Advanced Video Downreamer"
+                    USER_AGENT
                 )
                 val contentLength = connection.contentLength
                 if (contentLength > 0) {
@@ -530,7 +495,11 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     "Unknown size"
                 }
-            } catch (e: Exception) {
+            } catch (e: java.io.IOException) {
+                Logger.w("MainActivity", "IO error getting file size for $url: ${e.message}")
+                "Unknown size"
+            } catch (e: SecurityException) {
+                Logger.w("MainActivity", "Security error getting file size for $url: ${e.message}")
                 "Unknown size"
             }
             fileSizeCache.put(url, fileSize)
@@ -540,72 +509,34 @@ class MainActivity : AppCompatActivity() {
 
     private fun formatFileSize(size: Long): String {
         return when {
-            size < 1024 -> "$size B"
-            size < 1024 * 1024 ->
-                String.format(Locale.US, "%.1f KB", size / 1024.0)
-            size < 1024 * 1024 * 1024 ->
+            size < BYTES_IN_KILOBYTE -> "$size B"
+            size < BYTES_IN_MEGABYTE ->
+                String.format(Locale.US, "%.1f KB", size / BYTES_IN_KILOBYTE.toDouble())
+            size < BYTES_IN_GIGABYTE ->
                 String.format(
                     Locale.US,
                     "%.1f MB",
-                    size / (1024.0 * 1024.0)
+                    size / BYTES_IN_MEGABYTE.toDouble()
                 )
             else ->
                 String.format(
                     Locale.US,
                     "%.2f GB",
-                    size / (1024.0 * 1024.0 * 1024.0)
+                    size / BYTES_IN_GIGABYTE.toDouble()
                 )
         }
     }
 
+    private val selectionController by lazy { SelectionController(this) }
     private fun handleFileSelection(file: DownloadFile, isSelected: Boolean) {
-        if (isSelected) {
-            viewModel.selectFile(file.url)
-        } else {
-            viewModel.deselectFile(file.url)
-        }
-        textViewSelectedCount.text =
-            "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
-        updateActionButtons()
-        updateSelectedSizeInfo()
+        selectionController.handleFileSelection(file, isSelected)
     }
 
-    private fun selectAllFiles() {
-        viewModel.setSelectedFiles(
-            viewModel.currentFiles.value?.map { it.url }?.toSet() ?: emptySet()
-        )
-        val adapter = recyclerViewFiles.adapter as? FileAdapter
-        adapter?.selectAll()
-        textViewSelectedCount.text =
-            "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
-        updateActionButtons()
-        updateSelectedSizeInfo()
-    }
+    private fun selectAllFiles() { selectionController.selectAllFiles() }
 
-    private fun deselectAllFiles() {
-        viewModel.clearSelection()
-        val adapter = recyclerViewFiles.adapter as? FileAdapter
-        adapter?.clearSelection()
-        textViewSelectedCount.text = "Selected: 0"
-        updateActionButtons()
-        updateSelectedSizeInfo()
-    }
+    private fun deselectAllFiles() { selectionController.deselectAllFiles() }
 
-    private fun invertSelection() {
-        val adapter = recyclerViewFiles.adapter as? FileAdapter ?: return
-        val allFiles = viewModel.currentFiles.value ?: emptyList()
-        val newSelected = mutableSetOf<String>()
-        for (file in allFiles) {
-            if (!(viewModel.selectedFiles.value?.contains(file.url) ?: false)) {
-                newSelected.add(file.url)
-            }
-        }
-        viewModel.setSelectedFiles(newSelected)
-        adapter.updateFiles(allFiles)
-        textViewSelectedCount.text = "Selected: ${viewModel.selectedFiles.value?.size ?: 0}"
-        updateActionButtons()
-        updateSelectedSizeInfo()
-    }
+    private fun invertSelection() { selectionController.invertSelection() }
 
     private fun filterFiles(query: String) {
         if (query.isEmpty()) {
@@ -622,131 +553,136 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateActionButtons() {
-        val hasSelection = viewModel.selectedFiles.value?.isNotEmpty() == true
-        buttonDownload.isEnabled = hasSelection
-        buttonStream.isEnabled = hasSelection
-    }
+    internal fun updateActionButtons() { selectionController.updateActionButtons() }
 
-    private fun updateSelectedSizeInfo() {
-        val selectedFileList = viewModel.currentFiles.value?.filter {
-            viewModel.selectedFiles.value?.contains(it.url) == true
-        } ?: emptyList()
-        val totalBytes = selectedFileList.sumOf { parseFileSizeToBytes(it.size) }
-        textViewSelectedSize.text = "Total size: ${formatFileSize(totalBytes)}"
-        val freeSpace = viewModel.getDownloadDir().freeSpace
-        if (totalBytes > 0 && totalBytes > freeSpace) {
-            textViewSelectedSize.setTextColor(android.graphics.Color.RED)
-            textViewSelectedSize.text =
-                "Total size: ${formatFileSize(totalBytes)} (Not enough space!)"
-        } else {
-            textViewSelectedSize.setTextColor(android.graphics.Color.WHITE)
-        }
-    }
+    internal fun updateSelectedSizeInfo() { selectionController.updateSelectedSizeInfo() }
 
-    private fun parseFileSizeToBytes(sizeStr: String): Long {
-        val s = sizeStr.trim().lowercase()
-        return when {
-            s.endsWith("gb") -> (
-                (s.removeSuffix("gb").trim().toDoubleOrNull() ?: 0.0) *
-                    1024 * 1024 * 1024
-                ).toLong()
-            s.endsWith("mb") -> (
-                (s.removeSuffix("mb").trim().toDoubleOrNull() ?: 0.0) *
-                    1024 * 1024
-                ).toLong()
-            s.endsWith("kb") -> (
-                (s.removeSuffix("kb").trim().toDoubleOrNull() ?: 0.0) *
-                    1024
-                ).toLong()
-            s.endsWith("b") -> (
-                s.removeSuffix("b").trim().toDoubleOrNull() ?: 0.0
-                ).toLong()
-            else -> 0L
-        }
-    }
+    // moved to SelectionController
 
-    private fun startDownloadForSelectedFiles() {
-        Logger.d("MainActivity", "startDownloadForSelectedFiles started")
+    private fun validatePreconditionsForDownloads(): Boolean {
+        val hasStorage = ErrorHandler.isStorageAvailable(viewModel.getDownloadDir().absolutePath)
+        val hasNetwork = ErrorHandler.isNetworkAvailable(this)
 
-        if (!ErrorHandler.isStorageAvailable(this, viewModel.getDownloadDir().absolutePath)) {
+        if (!hasStorage) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
                 SecurityException("Storage not available"),
                 this
             )
             Logger.w("MainActivity", "Storage not available")
             showSnackbar(errorMessage)
-            return
-        }
-        if (!ErrorHandler.isNetworkAvailable(this)) {
+        } else if (!hasNetwork) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
                 ConnectException("No network connection"),
                 this
             )
             Logger.w("MainActivity", "No network connection")
             showSnackbar(errorMessage)
-            return
         }
-        val filesToDownload = viewModel.currentFiles.value?.filter {
-            viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded()
-        } ?: emptyList()
-        Logger.d("MainActivity", "Files to download: ${filesToDownload.size}")
 
-        if (filesToDownload.isEmpty()) {
-            Logger.i("MainActivity", "All selected files are already downloaded")
-            showSnackbar("All selected files are already downloaded.")
-            return
-        }
-        for (file in filesToDownload) {
-            // Mark download as started
-            val adapter = recyclerViewFiles.adapter as? FileAdapter
-            adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
-
-            // Start each download in parallel using optimized scope
-            downloadScope.launch {
-                try {
-                    downloadFile(file)
-                } catch (e: Exception) {
-                    Logger.e("MainActivity", "Error downloading ${file.name}: ${e.message}", e)
-                    val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
-                    withContext(Dispatchers.Main) {
-                        adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                        adapter?.updateProgressOnly(file.url, -1)
-                        adapter?.flushProgressUpdates()
-                        showSnackbar("Error downloading ${file.name}: $errorMessage")
-                    }
-                }
-            }
-        }
+        return hasStorage && hasNetwork
     }
 
-    private suspend fun downloadFile(file: DownloadFile) = withContext(Dispatchers.IO) {
-        if (!ErrorHandler.isStorageAvailable(
-                this@MainActivity,
-                viewModel.getDownloadDir().absolutePath
-            )
-        ) {
+    private suspend fun validateDownloadPreconditions(): Boolean {
+        val hasStorage = ErrorHandler.isStorageAvailable(viewModel.getDownloadDir().absolutePath)
+        val hasNetwork = ErrorHandler.isNetworkAvailable(this@MainActivity)
+
+        if (!hasStorage) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
                 SecurityException("Storage not available"),
                 this@MainActivity
             )
             runOnUiThread { showSnackbar(errorMessage) }
-            return@withContext
-        }
-        if (!ErrorHandler.isNetworkAvailable(this@MainActivity)) {
+        } else if (!hasNetwork) {
             val errorMessage = ErrorHandler.getUserFriendlyMessage(
                 ConnectException("No network connection"),
                 this@MainActivity
             )
             runOnUiThread { showSnackbar(errorMessage) }
-            return@withContext
         }
+
+        return hasStorage && hasNetwork
+    }
+
+    private fun filesPendingDownload(): List<DownloadFile> {
+        return viewModel.currentFiles.value?.filter {
+            viewModel.selectedFiles.value?.contains(it.url) == true && !it.isCompletelyDownloaded()
+        } ?: emptyList()
+    }
+
+    private fun launchDownload(file: DownloadFile) {
+        val adapter = recyclerViewFiles.adapter as? FileAdapter
+        adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
+        downloadScope.launch {
+            try {
+                downloadFile(file)
+            } catch (e: SecurityException) {
+                Logger.e(
+                    "MainActivity",
+                    "Security error downloading ${file.name}: ${e.message}",
+                    e
+                )
+                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+                withContext(Dispatchers.Main) {
+                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
+                    adapter?.updateProgressOnly(file.url, PERCENT_100)
+                    adapter?.flushProgressUpdates()
+                    showSnackbar("Error downloading ${file.name}: $errorMessage")
+                }
+            } catch (e: java.io.IOException) {
+                Logger.e(
+                    "MainActivity",
+                    "IO error downloading ${file.name}: ${e.message}",
+                    e
+                )
+                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+                withContext(Dispatchers.Main) {
+                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
+                    adapter?.updateProgressOnly(file.url, PERCENT_100)
+                    adapter?.flushProgressUpdates()
+                    showSnackbar("Error downloading ${file.name}: $errorMessage")
+                }
+            } catch (e: IllegalArgumentException) {
+                Logger.e(
+                    "MainActivity",
+                    "Invalid argument downloading ${file.name}: ${e.message}",
+                    e
+                )
+                val errorMessage = ErrorHandler.getUserFriendlyMessage(e, this@MainActivity)
+                withContext(Dispatchers.Main) {
+                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
+                    adapter?.updateProgressOnly(file.url, PERCENT_100)
+                    adapter?.flushProgressUpdates()
+                    showSnackbar("Error downloading ${file.name}: $errorMessage")
+                }
+            }
+        }
+    }
+
+    internal fun startDownloadForSelectedFiles() {
+        Logger.d("MainActivity", "startDownloadForSelectedFiles started")
+        if (!validatePreconditionsForDownloads()) {
+            return
+        }
+        val filesToDownload = filesPendingDownload()
+        if (filesToDownload.isEmpty()) {
+            Logger.i("MainActivity", "All selected files are already downloaded")
+            showSnackbar("All selected files are already downloaded.")
+            return
+        }
+        Logger.d("MainActivity", "Files to download: ${filesToDownload.size}")
+        for (file in filesToDownload) {
+            launchDownload(file)
+        }
+    }
+
+    private fun prepareOutputFile(file: DownloadFile): java.io.File? {
         val downloadsDir = FileUtils.getDownloadDir(
             viewModel.currentStorageDir.value,
             file.subfolder
         )
         FileUtils.ensureDirExists(downloadsDir)
-        val fileName = file.name.ifEmpty { file.url.substringAfterLast("/") }
+        val rawName = file.name.ifEmpty { file.url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(rawName)
         val outputFile = FileUtils.getLocalFile(
             viewModel.currentStorageDir.value,
             fileName,
@@ -761,7 +697,53 @@ class MainActivity : AppCompatActivity() {
         if (outputFile.exists()) {
             FileUtils.safeDelete(outputFile)
         }
-        if (outputFile.exists()) {
+        return if (outputFile.exists()) null else outputFile
+    }
+
+    private fun openConnection(urlStr: String): java.net.URLConnection {
+        val connection = java.net.URL(urlStr).openConnection()
+        connection.connectTimeout = CONNECT_TIMEOUT_MS
+        connection.readTimeout = READ_TIMEOUT_MS
+        connection.setRequestProperty("User-Agent", USER_AGENT)
+        connection.setRequestProperty("Connection", "close") // Use close instead of keep-alive
+        connection.setRequestProperty("Accept-Encoding", "identity")
+        connection.setRequestProperty("Range", "bytes=0-") // Support range requests
+        return connection
+    }
+
+    private fun updateProgress(fileUrl: String, roundedProgress: Int) {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastProgressUpdate > progressUpdateInterval) {
+            runOnUiThread {
+                val adapter = recyclerViewFiles.adapter as? FileAdapter
+                adapter?.updateDownloadProgress(fileUrl, roundedProgress)
+            }
+            lastProgressUpdate = currentTime
+        } else {
+            progressUpdateQueue[fileUrl] = roundedProgress
+        }
+    }
+
+    private fun finalizeDownload(file: DownloadFile) {
+        runOnUiThread {
+            val adapter = recyclerViewFiles.adapter as? FileAdapter
+            adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.COMPLETE)
+            adapter?.updateProgressOnly(file.url, PERCENT_100)
+            adapter?.flushProgressUpdates()
+            showSnackbar("Downloaded: ${file.name}")
+        }
+    }
+
+    private val downloadController = DownloadController(
+        bufferSizeProvider = { memoryManager.getRecommendedBufferSize(this@MainActivity) }
+    )
+
+    @Suppress("LongMethod")
+    private suspend fun downloadFile(file: DownloadFile) = withContext(Dispatchers.IO) {
+        if (!validateDownloadPreconditions()) return@withContext
+
+        val outputFile = prepareOutputFile(file)
+        if (outputFile == null) {
             runOnUiThread {
                 showSnackbar(
                     "Cannot download: File or directory still exists after deletion. " +
@@ -770,384 +752,96 @@ class MainActivity : AppCompatActivity() {
             }
             Logger.e(
                 "DownloadDebug",
-                "File still exists after deletion: ${outputFile.absolutePath}"
+                "File still exists after deletion for ${file.url}"
             )
             return@withContext
         }
+
         try {
-            // Initialize progress bar immediately when download starts
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
                 adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.DOWNLOADING)
-                adapter?.updateDownloadProgress(file.url, 0)
+                adapter?.updateDownloadProgress(file.url, PERCENT_0)
             }
 
-            val connection = URL(file.url).openConnection()
-            connection.connectTimeout = 15000 // Reduced timeout for faster failure detection
-            connection.readTimeout = 30000
-            connection.setRequestProperty(
-                "User-Agent",
-                "Mozilla/5.0 (Android) Advanced Video Downreamer"
-            )
-            val inputStream = connection.getInputStream()
-            val outputStream = FileOutputStream(outputFile, false)
-            val buffer = ByteArray(
-                memoryManager.getRecommendedBufferSize(this@MainActivity)
-            ) // Memory-aware buffer size
-            var bytesRead: Int
-            var totalBytesRead = 0L
-            val contentLength = connection.contentLength
-            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                outputStream.write(buffer, 0, bytesRead)
-                totalBytesRead += bytesRead
-                if (contentLength > 0) {
-                    val progress = ((totalBytesRead * 100) / contentLength).toInt()
-                    // Update progress in 2% increments for better responsiveness
-                    val roundedProgress = (progress / 2) * 2
+            Logger.d("DownloadDebug", "Starting download to: ${outputFile.absolutePath}")
 
-                    val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
-                        // Update progress immediately for better responsiveness
-                        runOnUiThread {
-                            val adapter = recyclerViewFiles.adapter as? FileAdapter
-                            adapter?.updateDownloadProgress(file.url, roundedProgress)
+            // Try download with retry logic
+            var retryCount = 0
+            val maxRetries = MAX_RETRIES
+            var success = false
+
+            while (retryCount < maxRetries && !success) {
+                try {
+                    val connection = openConnection(file.url)
+                    downloadController.performDownload(
+                        connection = connection,
+                        outputFile = outputFile,
+                        onProgress = { progress ->
+                            val rounded = (progress / PERCENT_2) * PERCENT_2
+                            updateProgress(file.url, rounded)
                         }
-                        lastProgressUpdate = currentTime
+                    )
+                    success = true
+                    Logger.d(
+                        "DownloadDebug",
+                        "Download completed successfully on attempt ${retryCount + 1}"
+                    )
+                } catch (e: java.io.IOException) {
+                    retryCount++
+                    Logger.w("DownloadDebug", "Download attempt $retryCount failed: ${e.message}")
+                    if (retryCount < maxRetries) {
+                        Logger.d("DownloadDebug", "Retrying download in 2 seconds...")
+                        kotlinx.coroutines.delay(RETRY_DELAY_MS) // Wait 2 seconds before retry
                     } else {
-                        // Queue for batch update
-                        progressUpdateQueue[file.url] = roundedProgress
+                        throw e
                     }
                 }
             }
-            // Ensure proper resource cleanup
-            inputStream.use { it.close() }
-            outputStream.use { it.close() }
-            // Make the file world-readable for other apps (e.g., VLC)
-            outputFile.setReadable(true, false)
-            runOnUiThread {
-                val adapter = recyclerViewFiles.adapter as? FileAdapter
-                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.COMPLETE)
-                adapter?.updateProgressOnly(file.url, 100)
-                adapter?.flushProgressUpdates()
-                showSnackbar("Downloaded: ${file.name}")
-            }
-        } catch (e: Exception) {
+
+            val completedMsg = "Download completed. Exists=${outputFile.exists()} " +
+                "Size=${outputFile.length()}"
+            Logger.d("DownloadDebug", completedMsg)
+            finalizeDownload(file)
+        } catch (e: java.io.IOException) {
             runOnUiThread {
                 val adapter = recyclerViewFiles.adapter as? FileAdapter
                 adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-                adapter?.updateProgressOnly(file.url, -1)
+                adapter?.updateProgressOnly(file.url, PERCENT_100)
                 adapter?.flushProgressUpdates()
-                showSnackbar("Error downloading ${file.name}: ${e.message}")
+                showSnackbar("I/O error downloading ${file.name}: ${e.message}")
             }
-            Logger.e("DownloadDebug", "Error downloading file: ${e.message}", e)
+            Logger.e(
+                "DownloadDebug",
+                "Error downloading file: ${e.message}",
+                e
+            )
+        } catch (e: SecurityException) {
+            runOnUiThread {
+                val adapter = recyclerViewFiles.adapter as? FileAdapter
+                adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
+                adapter?.updateProgressOnly(file.url, PERCENT_100)
+                adapter?.flushProgressUpdates()
+                showSnackbar("Security error downloading ${file.name}: ${e.message}")
+            }
+            Logger.e("DownloadDebug", "Security error downloading file: ${e.message}", e)
         }
     }
 
-    private fun streamSelectedFiles() {
-        // Only use the current selection, do not modify selection state
-        val selectedFileList = viewModel.currentFiles.value?.filter {
-            viewModel.selectedFiles.value?.contains(it.url) == true
-        } ?: emptyList()
-        if (selectedFileList.isNotEmpty()) {
-            if (selectedFileList.size == 1) {
-                // Single file - use priority streaming
-                val file = selectedFileList.first()
-                streamFileWithPriority(file)
-            } else {
-                // Multiple files - create playlist
-                createAndStreamPlaylist(selectedFileList)
-            }
-            // Clear selection after streaming
-            viewModel.clearSelection()
-            val adapter = recyclerViewFiles.adapter as? FileAdapter
-            adapter?.clearSelection()
-            textViewSelectedCount.text = "Selected: 0"
-            updateActionButtons()
-            updateSelectedSizeInfo()
-        }
-    }
+    private val playbackController by lazy { PlaybackController(this) }
+    internal fun streamSelectedFiles() { playbackController.streamSelectedFiles() }
 
     private fun streamFileWithPriority(file: DownloadFile) {
-        if (!isStorageAvailable()) {
-            showSnackbar("Storage not available. Please check your storage or SD card.")
-            return
-        }
-        val intent = Intent(Intent.ACTION_VIEW)
-        val mimeType = getMimeType(file.url)
-        if (file.isCompletelyDownloaded()) {
-            val localPath = file.getLocalPath()
-            val localFile = if (localPath != null) File(localPath) else null
-            if (localFile == null || !localFile.exists() || localFile.length() == 0L) {
-                intent.setDataAndType(android.net.Uri.parse(file.url), mimeType)
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                intent.putExtra(Intent.EXTRA_TITLE, file.name)
-                showSnackbar("Local file missing, streaming from network")
-            } else if (localFile.isDirectory) {
-                Log.e("StreamDebug", "Selected file is a directory: ${localFile.absolutePath}")
-                showSnackbar("Cannot stream a directory. Please select a file.")
-                return
-            } else if (isOnSdCard(localFile)) {
-                // SD card file: use SAF
-                if (sdCardUri == null) {
-                    showSnackbar("SD card access required. Please select the SD card root.")
-                    openDocumentTreeLauncher.launch(null)
-                    return
-                }
-                val contentUri = getSdCardContentUri(localFile)
-                if (contentUri == null) {
-                    showSnackbar("Could not get SD card content URI. Please reselect SD card.")
-                    openDocumentTreeLauncher.launch(null)
-                    return
-                }
-                Log.d(
-                    "StreamDebug",
-                    "Streaming SD file: ${localFile.absolutePath}, uri: " +
-                        "$contentUri, mimeType: $mimeType"
-                )
-                intent.setDataAndType(contentUri, mimeType)
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                intent.putExtra(Intent.EXTRA_TITLE, file.name)
-                val vlcPackages = listOf("org.videolan.vlc", "com.huawei.vlc")
-                var launched = false
-                for (pkg in vlcPackages) {
-                    intent.setPackage(pkg)
-                    try {
-                        startActivity(intent)
-                        launched = true
-                        break
-                    } catch (e: Exception) {
-                        Log.e("StreamDebug", "Error launching intent for package $pkg", e)
-                    }
-                }
-                if (!launched) {
-                    intent.setPackage(null)
-                    try {
-                        startActivity(Intent.createChooser(intent, "Open with"))
-                    } catch (e: Exception) {
-                        Log.e("StreamDebug", "No app found to open this file", e)
-                        showSnackbar("No app found to open this file")
-                    }
-                }
-                return
-            } else {
-                // Internal storage: use FileProvider
-                try {
-                    val localUri = FileProvider.getUriForFile(
-                        this,
-                        "${com.downloadmanager.app.BuildConfig.APPLICATION_ID}.fileprovider",
-                        localFile
-                    )
-                    Log.d(
-                        "StreamDebug",
-                        "Streaming local file: ${localFile.absolutePath}, uri: " +
-                            "$localUri, mimeType: $mimeType"
-                    )
-                    intent.setDataAndType(localUri, mimeType)
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    intent.putExtra(Intent.EXTRA_TITLE, file.name)
-                    val vlcPackages = listOf("org.videolan.vlc", "com.huawei.vlc")
-                    var launched = false
-                    for (pkg in vlcPackages) {
-                        intent.setPackage(pkg)
-                        try {
-                            startActivity(intent)
-                            launched = true
-                            break
-                        } catch (e: Exception) {
-                            Log.e("StreamDebug", "Error launching intent for package $pkg", e)
-                        }
-                    }
-                    if (!launched) {
-                        intent.setPackage(null)
-                        try {
-                            startActivity(Intent.createChooser(intent, "Open with"))
-                        } catch (e: Exception) {
-                            Log.e("StreamDebug", "No app found to open this file", e)
-                            showSnackbar("No app found to open this file")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("StreamDebug", "Error getting URI for file: ${localFile.absolutePath}", e)
-                    showSnackbar("Error streaming local file: ${e.message}")
-                }
-                return
-            }
-        } else {
-            intent.setDataAndType(android.net.Uri.parse(file.url), mimeType)
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            intent.putExtra(Intent.EXTRA_TITLE, file.name)
-            val vlcPackages = listOf("org.videolan.vlc", "com.huawei.vlc")
-            var launched = false
-            for (pkg in vlcPackages) {
-                intent.setPackage(pkg)
-                try {
-                    startActivity(intent)
-                    launched = true
-                    break
-                } catch (e: Exception) {
-                    Log.e("StreamDebug", "Error launching intent for package $pkg", e)
-                }
-            }
-            if (!launched) {
-                intent.setPackage(null)
-                try {
-                    startActivity(Intent.createChooser(intent, "Open with"))
-                } catch (e: Exception) {
-                    Log.e("StreamDebug", "No app found to open this file", e)
-                    showSnackbar("No app found to open this file")
-                }
-            }
-            return
-        }
+        playbackController.streamFileWithPriority(file)
     }
 
     private fun createAndStreamPlaylist(files: List<DownloadFile>) {
-        if (!isStorageAvailable()) {
-            showSnackbar("Storage not available. Please check your storage or SD card.")
-            return
-        }
-        try {
-            val downloadsDir = viewModel.getDownloadDir()
-            val isSdCard = downloadsDir.absolutePath.startsWith("/storage/") &&
-                !downloadsDir.absolutePath.startsWith("/storage/emulated/0/")
-            val playlistUri: Uri? = if (isSdCard) {
-                // Use SAF to create playlist file on SD card
-                if (sdCardUri == null) {
-                    showSnackbar("SD card access required. Please select the SD card folder.")
-                    openDocumentTreeLauncher.launch(null)
-                    return
-                }
-                val baseUri = sdCardUri!!
-                val basePath = DocumentsContract.getTreeDocumentId(baseUri)
-                val playlistName = "playlist_${System.currentTimeMillis()}.m3u"
-                val playlistContent = buildPlaylistContent(files)
-                // Correctly get the parent document URI for the folder
-                val parentDocumentUri = DocumentsContract.buildDocumentUriUsingTree(
-                    baseUri,
-                    basePath
-                )
-                val docUri = DocumentsContract.createDocument(
-                    contentResolver,
-                    parentDocumentUri,
-                    "audio/x-mpegurl",
-                    playlistName
-                )
-                if (docUri != null) {
-                    contentResolver.openOutputStream(docUri)?.use {
-                        it.write(
-                            playlistContent.toByteArray()
-                        )
-                    }
-                    lastPlaylistUri = docUri // Track for cleanup
-                    lastPlaylistFile = null
-                    docUri
-                } else {
-                    showSnackbar("Failed to create playlist file on SD card.")
-                    return
-                }
-            } else {
-                // Internal storage: use FileProvider
-                val playlistFile = createPlaylistFile(files)
-                val uri = FileProvider.getUriForFile(
-                    this,
-                    "${com.downloadmanager.app.BuildConfig.APPLICATION_ID}.fileprovider",
-                    playlistFile
-                )
-                lastPlaylistFile = playlistFile // Track for cleanup
-                lastPlaylistUri = null
-                uri
-            }
-            val intent = Intent(Intent.ACTION_VIEW)
-            intent.setDataAndType(playlistUri, "audio/x-mpegurl")
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            val vlcPackages = listOf("org.videolan.vlc", "com.huawei.vlc")
-            var launched = false
-            for (pkg in vlcPackages) {
-                intent.setPackage(pkg)
-                try {
-                    startActivity(intent)
-                    launched = true
-                    break
-                } catch (e: Exception) {
-                    // Try next package
-                }
-            }
-            if (!launched) {
-                intent.setPackage(null)
-                try {
-                    startActivity(Intent.createChooser(intent, "Open playlist with"))
-                    val localFiles = files.count { it.isCompletelyDownloaded() }
-                    val networkFiles = files.size - localFiles
-                    val message = "Opening playlist with ${files.size} files\n" +
-                        "\uD83D\uDCC1 Local: $localFiles | \uD83C\uDF10 Network: $networkFiles"
-                    showSnackbar(message)
-                } catch (e: Exception) {
-                    showSnackbar("No app found to open playlist. Try VLC or MX Player")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("Playlist", "Error creating playlist: ${e.message}", e)
-            showSnackbar("Error creating playlist: ${e.message}")
-        }
-    }
-
-    private fun createPlaylistFile(files: List<DownloadFile>): File {
-        val downloadsDir = viewModel.getDownloadDir()
-        if (!downloadsDir.exists()) {
-            downloadsDir.mkdirs()
-        }
-        val playlistFile = File(downloadsDir, "playlist_${System.currentTimeMillis()}.m3u")
-        val playlistContent = StringBuilder()
-        playlistContent.append("#EXTM3U\n")
-        playlistContent.append("# Playlist created by Download Manager\n")
-        playlistContent.append("# Priority: Local files first, then network files\n\n")
-        val sortedFiles = files.sortedWith(compareBy({ !it.isCompletelyDownloaded() }, { it.name }))
-        sortedFiles.forEach { file ->
-            if (file.isCompletelyDownloaded()) {
-                val localPath = file.getLocalPath()
-                playlistContent.append("#EXTINF:-1,${file.name} (LOCAL)\n")
-                playlistContent.append("file://$localPath\n\n")
-            } else {
-                playlistContent.append("#EXTINF:-1,${file.name} (NETWORK)\n")
-                playlistContent.append("${file.url}\n\n")
-            }
-        }
-        playlistFile.writeText(playlistContent.toString())
-        return playlistFile
-    }
-
-    private fun buildPlaylistContent(files: List<DownloadFile>): String {
-        val playlistContent = StringBuilder()
-        playlistContent.append("#EXTM3U\n")
-        playlistContent.append("# Playlist created by Download Manager\n")
-        playlistContent.append("# Priority: Local files first, then network files\n\n")
-        val sortedFiles = files.sortedWith(compareBy({ !it.isCompletelyDownloaded() }, { it.name }))
-        sortedFiles.forEach { file ->
-            if (file.isCompletelyDownloaded()) {
-                val localPath = file.getLocalPath()
-                playlistContent.append("#EXTINF:-1,${file.name} (LOCAL)\n")
-                playlistContent.append("file://$localPath\n\n")
-            } else {
-                playlistContent.append("#EXTINF:-1,${file.name} (NETWORK)\n")
-                playlistContent.append("${file.url}\n\n")
-            }
-        }
-        return playlistContent.toString()
-    }
-
-    private fun getMimeType(url: String): String {
-        val extension = url.substringAfterLast(".").lowercase()
-        return when (extension) {
-            "mp4", "mkv", "avi", "mov" -> "video/*"
-            "mp3", "wav", "flac" -> "audio/*"
-            "pdf" -> "application/pdf"
-            else -> "*/*"
-        }
+        playbackController.createAndStreamPlaylist(files)
     }
 
     private fun loadStorageDir() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val savedPath = prefs.getString(KEY_STORAGE_PATH, null)
+        val prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
+        val savedPath = prefs.getString(keyStoragePath, null)
         viewModel.setCurrentStorageDir(
             if (savedPath != null) File(savedPath) else getDefaultStorageDir()
         )
@@ -1155,59 +849,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveStorageDir(dir: File) {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        prefs.edit().putString(KEY_STORAGE_PATH, dir.absolutePath).apply()
+        val prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
+        prefs.edit().putString(keyStoragePath, dir.absolutePath).apply()
         viewModel.setCurrentStorageDir(dir)
         com.downloadmanager.app.model.DownloadFile.setDownloadDirectory(viewModel.getDownloadDir())
         updateStorageInfo()
     }
 
     private fun getDefaultStorageDir(): File {
-        // Prefer SD card public Download/DownloadManager if available
-        val externalDirs = getExternalFilesDirs(null)
-        if (externalDirs.size > 1 && externalDirs[1] != null) {
-            // Get SD card root
-            val sdRoot = File(externalDirs[1].absolutePath)
-            // Go up to /storage/XXXX-XXXX
-            val sdRootPath = sdRoot.absolutePath.substringBefore("/Android/")
-            val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
-            if (sdDownloadManager.exists() || sdDownloadManager.mkdirs()) {
-                return sdDownloadManager
-            }
-        }
-        // Fallback to internal storage public Download/DownloadManager
-        return File(
-            android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_DOWNLOADS
-            ),
-            "DownloadManager"
-        )
+        return storageController.getDefaultStorageDir()
     }
 
     private fun getAvailableStorageDirs(): List<Pair<String, File>> {
-        val dirs = mutableListOf<Pair<String, File>>()
-        // Internal storage
-        val internal = File(
-            android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_DOWNLOADS
-            ),
-            "DownloadManager"
-        )
-        dirs.add(Pair("Internal Storage", internal))
-        // SD card (if available)
-        val externalDirs = getExternalFilesDirs(null)
-        if (externalDirs.size > 1 && externalDirs[1] != null) {
-            val sdRoot = File(externalDirs[1].absolutePath)
-            val sdRootPath = sdRoot.absolutePath.substringBefore("/Android/")
-            val sdDownloadManager = File(sdRootPath, "Download/DownloadManager")
-            dirs.add(Pair("SD Card", sdDownloadManager))
-        }
-        return dirs
+        return storageController.getAvailableStorageDirs()
     }
 
     private fun getDownloadDir(subfolder: String? = null): File {
         val baseDir = viewModel.currentStorageDir.value ?: getDefaultStorageDir()
-        return if (subfolder.isNullOrEmpty()) baseDir else File(baseDir, subfolder)
+        return storageController.getDownloadDir(baseDir, subfolder)
     }
 
     private fun updateStorageInfo() {
@@ -1221,7 +880,7 @@ class MainActivity : AppCompatActivity() {
             "${dir.absolutePath}\nFree: $freeSpaceFormatted\nTotal: $totalSpaceFormatted"
     }
 
-    private fun showStorageSelectionDialog() {
+    internal fun showStorageSelectionDialog() {
         val dirs = getAvailableStorageDirs()
         val names = dirs.map { it.first }.toTypedArray()
         val current = dirs.indexOfFirst {
@@ -1239,7 +898,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionsIfNeeded() {
-        val permissionsToRequest = REQUIRED_PERMISSIONS.filter {
+        val permissionsToRequest = requiredPermissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (permissionsToRequest.isNotEmpty()) {
@@ -1277,7 +936,7 @@ class MainActivity : AppCompatActivity() {
         progressUpdateQueue.clear()
     }
 
-    private fun showSnackbar(message: String, long: Boolean = false) {
+    internal fun showSnackbar(message: String, long: Boolean = false) {
         val rootView = findViewById<View>(android.R.id.content)
         Snackbar.make(
             rootView,
@@ -1286,41 +945,25 @@ class MainActivity : AppCompatActivity() {
         ).show()
     }
 
-    private fun isStorageAvailable(): Boolean {
+    internal fun isStorageAvailable(): Boolean {
         val dir = viewModel.getDownloadDir()
         return dir.exists() && dir.canWrite()
     }
 
     private fun isNetworkAvailable(): Boolean {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val capabilities = cm.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val network = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            cm.activeNetwork
+        } else {
+            null
+        }
+        val capabilities = if (network != null) cm.getNetworkCapabilities(network) else null
+        return capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
-    private fun isOnSdCard(file: File): Boolean {
-        val path = file.absolutePath
-        return path.startsWith("/storage/") && !path.startsWith("/storage/emulated/0/")
-    }
+    // moved to Streamer usage; no longer needed here
 
-    private fun getSdCardContentUri(file: File): Uri? {
-        val baseUri = sdCardUri ?: return null
-        val basePath = DocumentsContract.getTreeDocumentId(baseUri)
-        val filePath = file.absolutePath
-        // Find the absolute path of the selected folder
-        val baseFolder = when {
-            basePath.startsWith("primary:") ->
-                "/storage/emulated/0/" + basePath.removePrefix("primary:")
-            basePath.contains(":") ->
-                "/storage/" + basePath.substringBefore(":") + "/" + basePath.substringAfter(":")
-            else -> "/storage/" + basePath
-        }.trimEnd('/')
-        // Check if file is within the selected folder
-        if (!filePath.startsWith(baseFolder)) return null
-        val relPath = filePath.removePrefix(baseFolder).trimStart('/')
-        val docId = if (relPath.isEmpty()) basePath else "$basePath/$relPath"
-        return DocumentsContract.buildDocumentUriUsingTree(baseUri, docId)
-    }
+    // moved to Streamer usage; no longer needed here
 
     // Helper to get the subfolder name from the current URL
     private fun getSubfolderNameFromUrl(): String {
