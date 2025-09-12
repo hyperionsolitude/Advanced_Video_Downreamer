@@ -13,6 +13,10 @@ class Streamer(
     private val isOnSdCard: (File) -> Boolean,
     private val getSdCardContentUri: (File) -> Uri?,
 ) {
+    companion object {
+        private const val MIN_FILENAME_LENGTH = 3
+        private const val HASHCODE_LENGTH = 4
+    }
 
     private fun getMimeTypeForUrl(url: String): String {
         return when (url.substringAfterLast(".", "").lowercase()) {
@@ -90,10 +94,14 @@ class Streamer(
             } catch (_: Exception) {
             }
 
-            val safeTitle = file.name.ifBlank { "Network Stream" }
+            val safeTitle = getUnifiedFileTitle(file)
+            val safeFileName = safeTitle
+                .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                .replace(Regex("\\s+"), " ")
+                .trim()
             val playlistFile = File(
                 parentDir,
-                "network_single_${System.currentTimeMillis()}.m3u"
+                "${safeFileName}_${System.currentTimeMillis()}.m3u"
             )
             val builder = StringBuilder()
             builder.append("#EXTM3U\n")
@@ -114,11 +122,17 @@ class Streamer(
             playlistIntent.setDataAndType(playlistUri, "audio/x-mpegurl")
             playlistIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             playlistIntent.putExtra(Intent.EXTRA_TITLE, safeTitle)
+            playlistIntent.putExtra("title", safeTitle)
+            playlistIntent.putExtra("android.intent.extra.TITLE", safeTitle)
+            playlistIntent.putExtra(Intent.EXTRA_STREAM, playlistUri)
             streamWithPreferredPlayers(playlistIntent)
         } catch (_: Exception) {
             intent.setDataAndType(Uri.parse(file.url), mimeType)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            intent.putExtra(Intent.EXTRA_TITLE, file.name)
+            val safeTitle = getUnifiedFileTitle(file)
+            intent.putExtra(Intent.EXTRA_TITLE, safeTitle)
+            intent.putExtra("title", safeTitle)
+            intent.putExtra("android.intent.extra.TITLE", safeTitle)
             streamWithPreferredPlayers(intent)
         }
     }
@@ -301,5 +315,46 @@ class Streamer(
                 (activity as? MainActivity)?.showSnackbar(text)
             }
         }
+    }
+
+    private fun getUnifiedFileTitle(file: DownloadFile): String {
+        // Keep for mixed/multi playlists
+        val prefix = if (file.isCompletelyDownloaded()) "Local" else "Network"
+        val base = getBaseTitle(file)
+        return "$prefix - $base"
+    }
+
+    private fun getBaseTitle(file: DownloadFile): String {
+        if (file.name.isNotBlank() &&
+            !file.name.matches(Regex("^\\d+\\s*\\[.*\\]$")) &&
+            file.name.length > MIN_FILENAME_LENGTH
+        ) {
+            return file.name
+        }
+        return extractTitleFromUrl(file.url)
+    }
+
+    private fun extractTitleFromUrl(url: String): String {
+        val last = url.substringAfterLast('/')
+        val decoded = try {
+            java.net.URLDecoder.decode(last, "UTF-8")
+        } catch (_: Exception) { last }
+
+        // Try to extract a better name from the URL path
+        val pathSegments = url.split('/').filter { it.isNotBlank() }
+        val potentialNames = pathSegments.filter { segment ->
+            segment.contains('.') &&
+                segment.length > MIN_FILENAME_LENGTH &&
+                !segment.matches(Regex("^\\d+\\s*\\[.*\\]$"))
+        }
+
+        val bestName = when {
+            potentialNames.isNotEmpty() -> potentialNames.last()
+            !decoded.matches(Regex("^\\d+\\s*\\[.*\\]$")) &&
+                decoded.length > MIN_FILENAME_LENGTH -> decoded
+            else -> null
+        }
+
+        return bestName ?: "Network Stream ${url.hashCode().toString().takeLast(HASHCODE_LENGTH)}"
     }
 }
