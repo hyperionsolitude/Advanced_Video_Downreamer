@@ -107,7 +107,7 @@ class Streamer(
 
             val playlistUri = FileProvider.getUriForFile(
                 activity,
-                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                activity.packageName + ".fileprovider",
                 playlistFile
             )
             val playlistIntent = Intent(Intent.ACTION_VIEW)
@@ -180,7 +180,7 @@ class Streamer(
             playlistFile.writeText(builder.toString())
             val playlistUri = FileProvider.getUriForFile(
                 activity,
-                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                activity.packageName + ".fileprovider",
                 playlistFile
             )
             val playlistIntent = Intent(Intent.ACTION_VIEW)
@@ -210,7 +210,7 @@ class Streamer(
             }
             val localUri = FileProvider.getUriForFile(
                 activity,
-                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                activity.packageName + ".fileprovider",
                 tempFile
             )
             intent.setDataAndType(localUri, mimeType)
@@ -221,7 +221,7 @@ class Streamer(
             try {
                 val localUri = FileProvider.getUriForFile(
                     activity,
-                    "${BuildConfig.APPLICATION_ID}.fileprovider",
+                    activity.packageName + ".fileprovider",
                     localFile
                 )
                 intent.setDataAndType(localUri, mimeType)
@@ -232,7 +232,7 @@ class Streamer(
                 try {
                     val localUri = FileProvider.getUriForFile(
                         activity,
-                        "${BuildConfig.APPLICATION_ID}.fileprovider",
+                        activity.packageName + ".fileprovider",
                         localFile
                     )
                     intent.setDataAndType(localUri, mimeType)
@@ -295,7 +295,6 @@ class Streamer(
 
     private fun show(text: String) {
         activity.runOnUiThread {
-            // Add a small delay to ensure RecyclerView has finished layout
             activity.findViewById<
                 androidx.recyclerview.widget.RecyclerView
                 >(R.id.recyclerViewFiles)?.post {

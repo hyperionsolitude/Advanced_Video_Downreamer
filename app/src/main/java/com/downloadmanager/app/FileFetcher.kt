@@ -28,7 +28,7 @@ class FileFetcher(
             .asSequence()
             .map { it to it.attr("href") }
             .filter { (_, href) -> href != "../" }
-            .map { (el, href) -> el to absoluteUrl(url, el) }
+            .map { (el, _) -> el to absoluteUrl(url, el) }
             .filter { (_, fullUrl) -> fullUrl.isNotBlank() }
             .filter { (_, fullUrl) -> isValidFileUrl(fullUrl) }
             .forEach { (element, fullUrl) ->

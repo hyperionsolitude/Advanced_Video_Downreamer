@@ -1,7 +1,6 @@
 package com.downloadmanager.app.utils
 
 import android.util.Log
-import com.downloadmanager.app.BuildConfig
 
 /**
  * Centralized logging utility for the app
@@ -10,8 +9,13 @@ import com.downloadmanager.app.BuildConfig
 object Logger {
     private const val TAG_PREFIX = "AdvVideoDownreamer"
 
+    private fun shouldLog(): Boolean {
+        // Use system property and loggable to avoid BuildConfig coupling
+        return Log.isLoggable(TAG_PREFIX, Log.DEBUG)
+    }
+
     fun d(tag: String, message: String, throwable: Throwable? = null) {
-        if (BuildConfig.DEBUG) {
+        if (shouldLog()) {
             if (throwable != null) {
                 Log.d("$TAG_PREFIX:$tag", message, throwable)
             } else {
@@ -21,7 +25,7 @@ object Logger {
     }
 
     fun i(tag: String, message: String, throwable: Throwable? = null) {
-        if (BuildConfig.DEBUG) {
+        if (shouldLog()) {
             if (throwable != null) {
                 Log.i("$TAG_PREFIX:$tag", message, throwable)
             } else {
@@ -31,7 +35,7 @@ object Logger {
     }
 
     fun w(tag: String, message: String, throwable: Throwable? = null) {
-        if (BuildConfig.DEBUG) {
+        if (shouldLog()) {
             if (throwable != null) {
                 Log.w("$TAG_PREFIX:$tag", message, throwable)
             } else {
@@ -41,7 +45,7 @@ object Logger {
     }
 
     fun e(tag: String, message: String, throwable: Throwable? = null) {
-        if (BuildConfig.DEBUG) {
+        if (shouldLog()) {
             if (throwable != null) {
                 Log.e("$TAG_PREFIX:$tag", message, throwable)
             } else {
@@ -51,7 +55,7 @@ object Logger {
     }
 
     fun v(tag: String, message: String, throwable: Throwable? = null) {
-        if (BuildConfig.DEBUG) {
+        if (shouldLog()) {
             if (throwable != null) {
                 Log.v("$TAG_PREFIX:$tag", message, throwable)
             } else {

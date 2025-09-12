@@ -157,7 +157,7 @@ class PlaylistCreator(
         playlistFile.writeText(content)
         val uri = FileProvider.getUriForFile(
             context,
-            "${com.downloadmanager.app.BuildConfig.APPLICATION_ID}.fileprovider",
+            context.packageName + ".fileprovider",
             playlistFile
         )
         return Result(uri, playlistFile)

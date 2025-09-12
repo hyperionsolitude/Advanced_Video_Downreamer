@@ -12,13 +12,13 @@ import com.downloadmanager.app.R
 import com.downloadmanager.app.model.DownloadFile
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
+@Suppress("UNUSED_PARAMETER")
 private fun setupSelectionUi(
     holder: FileAdapter.FileViewHolder,
     getSelectedFiles: () -> Set<String>,
     file: DownloadFile,
 ) {
-    @Suppress("UNUSED_PARAMETER")
-    val unused = holder to getSelectedFiles to file
+    // Selection UI logic placeholder - parameters available for future implementation
 }
 
 private fun bindFileTexts(
