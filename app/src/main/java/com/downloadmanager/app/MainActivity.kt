@@ -243,6 +243,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // Persist checkpoints when going to background so resume works reliably
+        saveDownloadCheckpoints()
         // Downloads will continue in background
         updateSelectedSizeInfo()
     }

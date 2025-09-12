@@ -27,21 +27,47 @@ class DownloadFileHandler(
             "AppleWebKit/537.36"
         private const val PERCENT_100 = 100
         private const val BUFFER_SIZE = 8192
+        private const val INTERNAL_MAX_STREAM_RETRIES = 5
+        private const val INTERNAL_RETRY_DELAY_MS = 1000L
     }
 
     suspend fun downloadFile(file: DownloadFile) {
         val outputFile = prepareOutputFile(file) ?: return
-        val startByte = getStartByte(file)
-        val connection = openConnection(file.url, startByte)
-        val totalSize = calculateTotalSize(connection.contentLength, startByte)
+        var currentStart = getStartByte(file)
+        var attempt = 0
+        var totalSize: Long = -1L
 
-        Logger.d(
-            "DownloadDebug",
-            "Content length: ${connection.contentLength}, Start byte: $startByte, " +
-                "Total size: $totalSize"
-        )
+        while (true) {
+            val connection = openConnection(file.url, currentStart)
+            if (totalSize < 0) {
+                totalSize = calculateTotalSize(connection.contentLength, currentStart)
+            }
 
-        performDownload(connection, outputFile, file.url, startByte, totalSize)
+            Logger.d(
+                "DownloadDebug",
+                "Start byte: $currentStart, Content length: ${connection.contentLength}, " +
+                    "Total size: $totalSize"
+            )
+
+            try {
+                performDownload(connection, outputFile, file.url, currentStart, totalSize)
+                break
+            } catch (e: java.io.IOException) {
+                // Update checkpoint and retry seamlessly without surfacing to UI
+                val checkpoint = downloadCheckpoints[file.url]
+                val resumedBytes = checkpoint?.downloadedBytes ?: currentStart
+                currentStart = resumedBytes
+                attempt += 1
+                if (attempt > INTERNAL_MAX_STREAM_RETRIES) {
+                    throw e
+                }
+                try {
+                    kotlinx.coroutines.delay(INTERNAL_RETRY_DELAY_MS * attempt)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
         updateUIOnCompletion(file)
         finalizeDownload(file)
     }
@@ -84,14 +110,25 @@ class DownloadFileHandler(
         var totalBytesRead = 0L
         var bytesRead: Int
 
-        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-            outputStream.write(buffer, 0, bytesRead)
-            totalBytesRead += bytesRead
+        try {
+            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                outputStream.write(buffer, 0, bytesRead)
+                totalBytesRead += bytesRead
 
-            if (totalSize > 0) {
-                val progress = ((startByte + totalBytesRead) * PERCENT_100 / totalSize).toInt()
-                updateProgress(fileUrl, progress)
+                if (totalSize > 0) {
+                    val progress = ((startByte + totalBytesRead) * PERCENT_100 / totalSize).toInt()
+                    updateProgress(fileUrl, progress)
+                }
             }
+        } catch (e: java.io.IOException) {
+            // Save checkpoint for seamless internal resume then bubble to caller for retry
+            val checkpoint = downloadCheckpoints[fileUrl]
+            val newDownloaded = startByte + totalBytesRead
+            if (checkpoint != null) {
+                downloadCheckpoints[fileUrl] = checkpoint.copy(downloadedBytes = newDownloaded)
+            }
+            Logger.w("DownloadDebug", "Stream interrupted at $newDownloaded bytes, will retry")
+            throw e
         }
 
         Logger.d(

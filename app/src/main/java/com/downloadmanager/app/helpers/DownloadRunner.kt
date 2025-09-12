@@ -1,10 +1,8 @@
 package com.downloadmanager.app.helpers
 
-import android.content.Context
 import com.downloadmanager.app.adapter.FileAdapter
 import com.downloadmanager.app.model.DownloadCheckpoint
 import com.downloadmanager.app.model.DownloadFile
-import com.downloadmanager.app.utils.ErrorHandler
 import com.downloadmanager.app.utils.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,7 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class DownloadRunnerConfig(
-    val context: Context,
+    val context: android.content.Context,
     val downloadScope: CoroutineScope,
     val downloadCheckpoints: MutableMap<String, DownloadCheckpoint>,
     val activeDownloads: MutableSet<String>,
@@ -25,14 +23,15 @@ class DownloadRunner(
     private val config: DownloadRunnerConfig,
 ) {
     companion object {
-        private const val PERCENT_100 = 100
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val RETRY_DELAY_BASE_MS = 1_500L
     }
 
     fun launchDownload(file: DownloadFile, adapter: FileAdapter?) {
         adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.STARTED)
         ensureCheckpointExists(file)
         config.saveCheckpoints()
-        config.downloadScope.launch { runDownloadWithErrorHandling(file, adapter) }
+        config.downloadScope.launch { runDownloadWithRetries(file, adapter) }
     }
 
     private fun ensureCheckpointExists(file: DownloadFile) {
@@ -46,40 +45,53 @@ class DownloadRunner(
         config.downloadCheckpoints[file.url] = checkpoint
     }
 
-    private suspend fun runDownloadWithErrorHandling(
+    private suspend fun runDownloadWithRetries(
         file: DownloadFile,
         adapter: FileAdapter?,
     ) {
-        try {
-            config.downloadFileHandler.downloadFile(file)
-        } catch (e: SecurityException) {
-            handleDownloadError(file, adapter, e)
-        } catch (e: java.io.IOException) {
-            handleDownloadError(file, adapter, e)
-        } catch (e: IllegalArgumentException) {
-            handleDownloadError(file, adapter, e)
+        var attempt = 0
+        while (attempt <= MAX_RETRY_ATTEMPTS) {
+            try {
+                config.downloadFileHandler.downloadFile(file)
+                return
+            } catch (e: SecurityException) {
+                handleNonFatalError(file, adapter, e)
+            } catch (e: java.io.IOException) {
+                handleNonFatalError(file, adapter, e)
+            } catch (e: IllegalArgumentException) {
+                handleNonFatalError(file, adapter, e)
+            }
+
+            // Exponential backoff before retrying
+            attempt += 1
+            if (attempt <= MAX_RETRY_ATTEMPTS) {
+                val delayMs = RETRY_DELAY_BASE_MS * attempt
+                kotlinx.coroutines.delay(delayMs)
+            } else {
+                // Out of retries – keep checkpoint for resume on next start and mark paused
+                withContext(Dispatchers.Main) {
+                    adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.PAUSED)
+                    adapter?.flushProgressUpdates()
+                }
+                config.saveCheckpoints()
+                return
+            }
         }
     }
 
-    private suspend fun handleDownloadError(
+    private suspend fun handleNonFatalError(
         file: DownloadFile,
         adapter: FileAdapter?,
         throwable: Throwable,
     ) {
-        Logger.e(
+        Logger.w(
             "DownloadRunner",
-            "Error downloading ${file.name}: ${throwable.message}",
+            "Transient error for ${file.name}: ${throwable.message}",
             throwable
         )
-        val errorMessage = ErrorHandler.getUserFriendlyMessage(throwable, config.context)
-        withContext(Dispatchers.Main) {
-            adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.FAILED)
-            adapter?.updateProgressOnly(file.url, PERCENT_100)
-            adapter?.flushProgressUpdates()
-            config.activeDownloads.remove(file.url)
-            config.downloadCheckpoints.remove(file.url)
-            config.saveCheckpoints()
-            config.showSnackbar("Error downloading ${file.name}: $errorMessage")
-        }
+        // Do not surface transient retry to UI; keep state as-is and continue
+        withContext(Dispatchers.Main) { adapter?.flushProgressUpdates() }
+        // Keep checkpoint and active download to allow seamless retry
+        config.saveCheckpoints()
     }
 }
