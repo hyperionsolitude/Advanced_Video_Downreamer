@@ -77,10 +77,10 @@ This project uses GitHub Actions for automated quality assurance and builds:
 - **Detekt**: Static code analysis for Kotlin
 - **KtLint**: Code style and formatting checks
 - **Android Lint**: Android-specific code analysis
-- **Import Sorting**: Automatic import organization
+- **Import Sorting**: Automatic import organization (via `scripts/sort_imports.sh`)
 
 ### Build Workflow
-- **Unit Tests**: Automated test execution
+- **Unit Tests**: Automated test execution (if present)
 - **Debug APK**: Build and upload debug APK
 - **Release APK**: Build and upload release APK
 - **Artifact Upload**: Test results and QA reports
@@ -89,6 +89,26 @@ This project uses GitHub Actions for automated quality assurance and builds:
 - Push to `main` or `develop` branches
 - Pull requests to `main` or `develop` branches
 - Manual workflow dispatch
+
+### Retrieving APKs from GitHub Actions
+- Open the latest workflow run under the **Actions** tab
+- Scroll to the bottom of the run summary to the **Artifacts** section
+- Download:
+  - `debug-apks` for all generated debug APKs (handles variant/universal names)
+  - `release-apks` for all generated release APKs
+- If no artifacts appear, re-run the job and ensure the build completed successfully
+
+### Local QA Shortcuts
+```bash
+# Auto-format imports and verify ktlint
+./scripts/sort_imports.sh
+
+# Run individual checks
+./gradlew detekt ktlintMainSourceSetCheck lintDebug
+
+# Build APKs
+./gradlew assembleDebug assembleRelease
+```
 
 ## 🚀 Usage
 
@@ -117,8 +137,17 @@ This project uses GitHub Actions for automated quality assurance and builds:
 - **Storage Info**: View available space and current storage location
 
 #### File Streaming
-- **Stream Single File**: Select one file and tap "▶️ Stream"
-- **Create Playlist**: Select multiple audio/video files and tap "📋 Create Playlist"
+- **Stream Single File (Downloaded)**: Select a downloaded file and tap "▶️ Stream". The app creates a temporary single-item M3U playlist with the correct title to ensure proper display in VLC.
+- **Stream Mixed Selection**: Select both downloaded and network files; the app generates an M3U playlist that:
+  - Uses `file://` absolute paths for downloaded items
+  - Uses direct URLs for network items
+  - Includes titles via `#EXTINF` and VLC `#EXTVLCOPT` directives for consistent titles
+- The app prefers VLC for playlists. For single files, your preferred player may be offered.
+
+### Permissions
+- The app uses Android **FileProvider** and the **Storage Access Framework (SAF)**
+- On first external/SD-card access, you'll be prompted to grant folder access
+- If titles display as "unknown" in VLC, ensure the chosen folder has read permissions and try re-opening VLC (some devices refresh titles after screen unlock)
 
 ## 🏗️ Technical Details
 
@@ -135,6 +164,8 @@ This project uses GitHub Actions for automated quality assurance and builds:
 - **MainViewModel**: Business logic and data management
 - **DownloadFile**: Data model for file information
 - **FileUtils**: Utility functions for file operations
+- **PlaylistCreator**: Builds M3U playlists for single/multiple items
+- **Streamer**: Handles streaming logic, local/network fallbacks, and player intents
 
 ### Performance Optimizations
 - **Throttled UI Updates**: Progress updates limited to prevent UI lag
@@ -187,6 +218,15 @@ This project uses GitHub Actions for automated quality assurance and builds:
 - Check storage permissions
 - Try changing download location
 
+**Streaming plays from network instead of local**
+- Ensure the file is fully downloaded; the app tolerates a small size delta
+- Confirm the local path exists and is readable
+- For SD card, reselect the folder via SAF when prompted
+
+**VLC shows "unknown" title**
+- Re-open the stream; titles are injected via M3U and may refresh on unlock
+- Make sure VLC has storage permission and the playlist was re-generated recently
+
 **App crashes**
 - Restart the app
 - Clear app data if necessary
@@ -207,6 +247,9 @@ We welcome contributions! Please follow these steps:
 - Add comments for complex logic
 - Test on multiple Android versions
 - Update documentation for new features
+- Run local QA before opening a PR:
+  - `./scripts/sort_imports.sh`
+  - `./gradlew detekt ktlintMainSourceSetCheck lintDebug`
 
 ## 📄 License
 
