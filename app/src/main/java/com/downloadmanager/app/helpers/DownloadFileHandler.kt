@@ -157,6 +157,7 @@ class DownloadFileHandler(
             file.subfolder
         )
         FileUtils.ensureDirExists(downloadsDir)
+
         val rawName = file.name.ifEmpty { file.url.substringAfterLast("/") }
         val fileName = FileUtils.sanitizeFileName(rawName)
         val outputFile = FileUtils.getLocalFile(
@@ -165,16 +166,23 @@ class DownloadFileHandler(
             file.subfolder
         )
 
+        var result: File? = outputFile
         if (file.isCompletelyDownloaded()) {
             Logger.d("DownloadDebug", "File already completely downloaded: ${file.name}")
-            return null
+            result = null
+        } else {
+            if (outputFile.exists() && !file.isCompletelyDownloaded()) {
+                Logger.d("DownloadDebug", "File partially downloaded, will resume: ${file.name}")
+            }
+            if (!outputFile.exists()) {
+                try {
+                    FileUtils.ensureDirExists(outputFile.parentFile ?: downloadsDir)
+                    outputFile.createNewFile()
+                } catch (_: Exception) {
+                }
+            }
         }
-
-        if (outputFile.exists() && !file.isCompletelyDownloaded()) {
-            Logger.d("DownloadDebug", "File partially downloaded, will resume: ${file.name}")
-        }
-
-        return outputFile
+        return result
     }
 
     private fun openConnection(urlStr: String, startByte: Long): URLConnection {

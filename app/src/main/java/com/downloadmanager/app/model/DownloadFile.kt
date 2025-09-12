@@ -35,7 +35,7 @@ data class DownloadFile(
      * Check if this file is downloaded locally
      */
     fun isDownloaded(): Boolean {
-        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(name.ifEmpty { url.substringAfterLast("/") })
         return FileUtils.fileExists(downloadDir, fileName, subfolder)
     }
 
@@ -43,7 +43,7 @@ data class DownloadFile(
      * Check if this file is completely downloaded (not partial)
      */
     fun isCompletelyDownloaded(): Boolean {
-        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(name.ifEmpty { url.substringAfterLast("/") })
         val expectedSize = parseFileSizeToBytes()
         return FileUtils.isFileComplete(downloadDir, fileName, subfolder, expectedSize)
     }
@@ -77,7 +77,7 @@ data class DownloadFile(
      */
     fun getLocalPath(): String? {
         if (!isDownloaded()) return null
-        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(name.ifEmpty { url.substringAfterLast("/") })
         return FileUtils.getLocalFile(downloadDir, fileName, subfolder).absolutePath
     }
 
@@ -85,7 +85,7 @@ data class DownloadFile(
      * Check if this file is partially downloaded (exists but not complete)
      */
     fun isPartiallyDownloaded(): Boolean {
-        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(name.ifEmpty { url.substringAfterLast("/") })
         val expectedSize = parseFileSizeToBytes()
         return FileUtils.isFilePartiallyDownloaded(downloadDir, fileName, subfolder, expectedSize)
     }
@@ -94,7 +94,7 @@ data class DownloadFile(
      * Get the current size of the partially downloaded file
      */
     fun getPartialDownloadSize(): Long {
-        val fileName = name.ifEmpty { url.substringAfterLast("/") }
+        val fileName = FileUtils.sanitizeFileName(name.ifEmpty { url.substringAfterLast("/") })
         return FileUtils.getPartialFileSize(downloadDir, fileName, subfolder)
     }
 

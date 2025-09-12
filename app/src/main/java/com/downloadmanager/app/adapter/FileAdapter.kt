@@ -17,10 +17,6 @@ private fun setupSelectionUi(
     getSelectedFiles: () -> Set<String>,
     file: DownloadFile,
 ) {
-    // Don't set isSelected to prevent purple flashing
-    // Only the checkbox will indicate selection state
-    // Parameters are kept for consistency with the interface
-    // Suppress unused parameter warnings as they're part of the interface
     @Suppress("UNUSED_PARAMETER")
     val unused = holder to getSelectedFiles to file
 }
@@ -33,8 +29,9 @@ private fun bindFileTexts(
     val status = downloadStatus[file.url] ?: FileAdapter.DownloadStatus.PENDING
     val statusText = when {
         file.isCompletelyDownloaded() -> "\uD83D\uDCC1 LOCAL"
-        status == FileAdapter.DownloadStatus.DOWNLOADING -> "\uD83D\uDCCE DOWNLOADING"
-        file.isPartiallyDownloaded() -> "\uD83D\uDCC4 PAUSED"
+        status == FileAdapter.DownloadStatus.DOWNLOADING ||
+            status == FileAdapter.DownloadStatus.STARTED -> "\uD83D\uDCCE DOWNLOADING"
+        file.isPartiallyDownloaded() && !file.isCompletelyDownloaded() -> "\uD83D\uDCC4 PAUSED"
         else -> "\uD83C\uDF10 NETWORK"
     }
     holder.textViewName.text = "$statusText - ${file.name}"
@@ -45,12 +42,13 @@ private fun bindFileTexts(
                 ContextCompat.getColor(itemContext, R.color.status_local)
             )
         }
-        status == FileAdapter.DownloadStatus.DOWNLOADING -> {
+        status == FileAdapter.DownloadStatus.DOWNLOADING ||
+            status == FileAdapter.DownloadStatus.STARTED -> {
             holder.textViewName.setTextColor(
                 ContextCompat.getColor(itemContext, R.color.status_started)
             )
         }
-        file.isPartiallyDownloaded() -> {
+        file.isPartiallyDownloaded() && !file.isCompletelyDownloaded() -> {
             holder.textViewName.setTextColor(
                 ContextCompat.getColor(itemContext, R.color.status_paused)
             )
@@ -73,19 +71,10 @@ private fun setupCheckbox(
     onFileSelected: (DownloadFile, Boolean) -> Unit,
 ) {
     val isSelected = getSelectedFiles().contains(file.url)
-
-    // Temporarily disable the listener to prevent cascade effects during rebinding
     holder.checkBox.setOnCheckedChangeListener(null)
     holder.checkBox.isChecked = isSelected
-    // Set checkbox state without logging
-
-    // Set the listener after setting the checked state
     holder.checkBox.setOnCheckedChangeListener { _, isChecked ->
-        // Checkbox state changed
-        // Defer the UI update to avoid RecyclerView layout conflicts
-        holder.itemView.post {
-            onFileSelected(file, isChecked)
-        }
+        holder.itemView.post { onFileSelected(file, isChecked) }
     }
 }
 
@@ -98,7 +87,6 @@ private fun setupItemClick(
     holder.itemView.setOnClickListener {
         val currentState = getSelectedFiles().contains(file.url)
         val newState = !currentState
-        // Item clicked
         onFileSelected(file, newState)
     }
 }
@@ -153,11 +141,19 @@ private fun bindStatus(
             )
         }
         FileAdapter.DownloadStatus.PAUSED -> {
-            holder.textViewStatus.visibility = View.VISIBLE
-            holder.textViewStatus.text = "Paused"
-            holder.textViewStatus.setTextColor(
-                ContextCompat.getColor(holder.itemView.context, R.color.status_paused)
-            )
+            if (file.isCompletelyDownloaded()) {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Complete"
+                holder.textViewStatus.setTextColor(
+                    ContextCompat.getColor(holder.itemView.context, R.color.status_complete)
+                )
+            } else {
+                holder.textViewStatus.visibility = View.VISIBLE
+                holder.textViewStatus.text = "Paused"
+                holder.textViewStatus.setTextColor(
+                    ContextCompat.getColor(holder.itemView.context, R.color.status_paused)
+                )
+            }
         }
         FileAdapter.DownloadStatus.COMPLETE -> {
             holder.textViewStatus.visibility = View.VISIBLE
@@ -198,23 +194,21 @@ class FileAdapter(
             return oldItem == newItem
         }
     }
-    private val downloadProgress = mutableMapOf<String, Int>() // url -> progress
-    private val lastProgressUpdate = mutableMapOf<String, Long>() // url -> timestamp
+    private val downloadProgress = mutableMapOf<String, Int>()
+    private val lastProgressUpdate = mutableMapOf<String, Long>()
 
-    // Update UI at most every 150ms per item for better performance
     private val progressUpdateThrottle = PROGRESS_THROTTLE_MS
-    private val progressUpdatePending = mutableSetOf<String>() // Track which items need UI updates
+    private val progressUpdatePending = mutableSetOf<String>()
 
-    // Download status tracking
     enum class DownloadStatus {
-        PENDING, // Selected but not started
-        STARTED, // Download has started
-        DOWNLOADING, // Currently downloading
-        PAUSED, // Download paused (partial file exists)
-        COMPLETE, // Download completed
-        FAILED, // Download failed
+        PENDING,
+        STARTED,
+        DOWNLOADING,
+        PAUSED,
+        COMPLETE,
+        FAILED,
     }
-    private val downloadStatus = mutableMapOf<String, DownloadStatus>() // url -> status
+    private val downloadStatus = mutableMapOf<String, DownloadStatus>()
 
     class FileViewHolder(itemView: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(
         itemView
@@ -251,11 +245,11 @@ class FileAdapter(
     override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
         val file = getItem(position)
         setupSelectionUi(holder, getSelectedFiles, file)
-        bindFileTexts(holder, file, downloadStatus)
         setupCheckbox(holder, getSelectedFiles, file, onFileSelected)
         setupItemClick(holder, file, getSelectedFiles, onFileSelected)
         bindProgress(holder, file, downloadProgress, PERCENT_MIN, PERCENT_MAX)
         bindStatus(holder, file, downloadStatus)
+        bindFileTexts(holder, file, downloadStatus)
     }
 
     fun updateFiles(newFiles: List<DownloadFile>) {
@@ -271,15 +265,14 @@ class FileAdapter(
     }
 
     private var lastUpdateTime = 0L
-    private val updateThrottleMs = UPDATE_THROTTLE_MS // Throttle updates to max once per 100ms
+    private val updateThrottleMs = UPDATE_THROTTLE_MS
 
     fun updateSelectionState() {
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastUpdateTime < updateThrottleMs.toLong()) {
-            return // Skip update if too soon
+            return
         }
         lastUpdateTime = currentTime
-
         updateVisibleCheckboxes()
     }
 
@@ -307,17 +300,10 @@ class FileAdapter(
     }
 
     private fun updateCheckboxState(holder: FileViewHolder, isSelected: Boolean) {
-        // Only update if the state actually changed to prevent unnecessary updates
         if (holder.checkBox.isChecked != isSelected) {
-            // Temporarily disable listener to prevent cascade effects
             holder.checkBox.setOnCheckedChangeListener(null)
-
-            // Simple state change without animation to prevent flashing
             holder.checkBox.isChecked = isSelected
-
-            // Re-enable listener after setting state
             holder.checkBox.setOnCheckedChangeListener { _, isChecked ->
-                // Checkbox changed
                 holder.itemView.post {
                     onFileSelected(getItem(holder.adapterPosition), isChecked)
                 }
@@ -328,9 +314,7 @@ class FileAdapter(
     fun updateDownloadProgress(url: String, progress: Int) {
         val currentTime = System.currentTimeMillis()
         val lastUpdate = lastProgressUpdate[url] ?: 0L
-
         downloadProgress[url] = progress
-
         if (currentTime - lastUpdate > progressUpdateThrottle) {
             updateProgressBarOnly(url, progress)
             lastProgressUpdate[url] = currentTime
@@ -406,10 +390,12 @@ class FileAdapter(
     }
 
     fun setDownloadStatus(url: String, status: DownloadStatus) {
+        val prev = downloadStatus[url]
+        if (prev == status) return
         downloadStatus[url] = status
         val index = currentList.indexOfFirst { it.url == url }
         if (index != -1) {
-            notifyItemChanged(index)
+            notifyItemChanged(index, status)
         }
     }
 

@@ -49,6 +49,10 @@ class DownloadRunner(
         file: DownloadFile,
         adapter: FileAdapter?,
     ) {
+        // Immediately reflect active state in UI to avoid lingering "Starting..."
+        withContext(Dispatchers.Main) {
+            adapter?.setDownloadStatus(file.url, FileAdapter.DownloadStatus.DOWNLOADING)
+        }
         var attempt = 0
         while (attempt <= MAX_RETRY_ATTEMPTS) {
             try {

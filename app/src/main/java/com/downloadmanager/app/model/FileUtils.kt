@@ -7,7 +7,7 @@ import kotlin.math.abs
 
 object FileUtils {
     private const val ONE_MB: Long = 1024 * 1024
-    private const val TOLERANCE_PERCENT = 1
+    private const val TOLERANCE_PERCENT = 2
     private const val ZERO_LONG = 0L
     private const val ONE_HUNDRED = 100
 
