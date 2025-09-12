@@ -80,10 +80,47 @@ class Streamer(
     }
 
     private fun streamFromNetwork(intent: Intent, file: DownloadFile, mimeType: String) {
-        intent.setDataAndType(Uri.parse(file.url), mimeType)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        intent.putExtra(Intent.EXTRA_TITLE, file.name)
-        streamWithPreferredPlayers(intent)
+        try {
+            val parentDir = File(activity.cacheDir, "network_playlists")
+            if (!parentDir.exists()) parentDir.mkdirs()
+            try {
+                parentDir.listFiles()?.filter { f ->
+                    f.isFile && f.extension.equals("m3u", true)
+                }?.forEach { it.delete() }
+            } catch (_: Exception) {
+            }
+
+            val safeTitle = file.name.ifBlank { "Network Stream" }
+            val playlistFile = File(
+                parentDir,
+                "network_single_${System.currentTimeMillis()}.m3u"
+            )
+            val builder = StringBuilder()
+            builder.append("#EXTM3U\n")
+            builder.append("#EXTINF:-1,$safeTitle\n")
+            builder.append("#EXTVLCOPT:meta-title=$safeTitle\n")
+            builder.append("#EXTVLCOPT:input-title-format=$safeTitle\n")
+            builder.append("#EXTVLCOPT:start-time=0\n")
+            builder.append("#EXTVLCOPT:network-caching=5000\n")
+            builder.append("${file.url}\n")
+            playlistFile.writeText(builder.toString())
+
+            val playlistUri = FileProvider.getUriForFile(
+                activity,
+                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                playlistFile
+            )
+            val playlistIntent = Intent(Intent.ACTION_VIEW)
+            playlistIntent.setDataAndType(playlistUri, "audio/x-mpegurl")
+            playlistIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            playlistIntent.putExtra(Intent.EXTRA_TITLE, safeTitle)
+            streamWithPreferredPlayers(playlistIntent)
+        } catch (_: Exception) {
+            intent.setDataAndType(Uri.parse(file.url), mimeType)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.putExtra(Intent.EXTRA_TITLE, file.name)
+            streamWithPreferredPlayers(intent)
+        }
     }
 
     private fun streamFromSdCard(

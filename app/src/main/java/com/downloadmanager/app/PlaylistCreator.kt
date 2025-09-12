@@ -111,6 +111,10 @@ class PlaylistCreator(
         builder.append("#EXTVLCOPT:meta-title=${title}\n")
         builder.append("#EXTVLCOPT:input-title-format=${title}\n")
         builder.append("#EXTVLCOPT:start-time=0\n")
+        // Limit VLC prebuffering for network streams to ~5 seconds
+        if (location.startsWith("http://") || location.startsWith("https://")) {
+            builder.append("#EXTVLCOPT:network-caching=5000\n")
+        }
         builder.append("$location\n\n")
     }
 
